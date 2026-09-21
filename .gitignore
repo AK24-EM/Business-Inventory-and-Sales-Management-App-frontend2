@@ -1,0 +1,79 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+
+# iOS
+store_app/ios/Pods/
+store_app/ios/.symlinks/
+store_app/ios/Flutter/Flutter.framework
+store_app/ios/Flutter/Flutter.podspec
+store_app/ios/.generated/
+store_app/ios/Runner.xcworkspace/
+
+# Android
+store_app/android/.gradle/
+store_app/android/captures/
+store_app/android/gradlew
+store_app/android/gradlew.bat
+store_app/android/local.properties
+store_app/android/**/GeneratedPluginRegistrant.java
+store_app/android/key.properties
+*.jks
+*.keystore
+
+# Web
+store_app/web/
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+backend/.pytest_cache/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Firebase
+.firebase/
+.firebaserc
+firebase-debug.log
+firebase-debug.*.log
+
+# Secrets and credentials
+*.json.secret
+*firebase-adminsdk*.json
+.env
+*.pem
+*.key
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# Logs
+logs/
+*.log
