@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "72855384303",
+    "project_id": "store-inventory-sale-manage",
+    "storage_bucket": "store-inventory-sale-manage.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:72855384303:android:b325854667d6871438ab1a",
+        "android_client_info": {
+          "package_name": "com.example.store_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHYeDK_I6vE7eqZSDeY2Iswt2haiqsNFs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
