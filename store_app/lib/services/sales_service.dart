@@ -95,33 +95,45 @@ class SalesService {
   Future<List<SaleModel>> getSalesByStore(
       String storeId, DateTime from, DateTime to) async {
     final snap = await _sales.where('storeId', isEqualTo: storeId).get();
-    return snap.docs
+    final sales = snap.docs
         .map(SaleModel.fromFirestore)
         .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
         .toList();
+    // Sort by timestamp descending (newest first)
+    sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return sales;
   }
 
   Future<List<SaleModel>> getAllSales(DateTime from, DateTime to) async {
     final snap = await _sales.get();
-    return snap.docs
+    final sales = snap.docs
         .map(SaleModel.fromFirestore)
         .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
         .toList();
+    // Sort by timestamp descending (newest first)
+    sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return sales;
   }
 
   Future<List<SaleModel>> getCustomerSales(String customerId) async {
     final snap = await _sales.where('customerId', isEqualTo: customerId).get();
-    return snap.docs.map(SaleModel.fromFirestore).toList();
+    final sales = snap.docs.map(SaleModel.fromFirestore).toList();
+    // Sort by timestamp descending (newest first)
+    sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return sales;
   }
 
   Stream<List<SaleModel>> getTodaySalesStream(String storeId) {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
     return _sales.where('storeId', isEqualTo: storeId).snapshots().map((snap) {
-      return snap.docs
+      final sales = snap.docs
           .map(SaleModel.fromFirestore)
           .where((s) => !s.timestamp.isBefore(start))
           .toList();
+      // Sort by timestamp descending (newest first)
+      sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return sales;
     });
   }
 }
