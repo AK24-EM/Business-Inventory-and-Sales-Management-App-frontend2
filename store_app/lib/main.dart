@@ -20,6 +20,7 @@ import 'services/customer_service.dart';
 import 'services/loyalty_service.dart';
 import 'services/billing_service.dart';
 import 'services/supplier_service.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,19 +29,25 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // Initialize notification service
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+
   FlutterError.onError = (details) {
     debugPrint('FlutterError: ${details.exception}');
   };
 
   runZonedGuarded(() {
-    runApp(const StoreIQApp());
+    runApp(StoreIQApp(notificationService: notificationService));
   }, (error, stack) {
     debugPrint('Uncaught: $error');
   });
 }
 
 class StoreIQApp extends StatelessWidget {
-  const StoreIQApp({super.key});
+  final NotificationService notificationService;
+  
+  const StoreIQApp({super.key, required this.notificationService});
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +60,7 @@ class StoreIQApp extends StatelessWidget {
         Provider<LoyaltyService>(create: (_) => LoyaltyService()),
         Provider<BillingService>(create: (_) => BillingService()),
         Provider<SupplierService>(create: (_) => SupplierService()),
+        Provider<NotificationService>.value(value: notificationService),
         ProxyProvider2<InventoryService, CustomerService, SalesService>(
           update: (_, inv, cust, __) => SalesService(inv, cust),
         ),

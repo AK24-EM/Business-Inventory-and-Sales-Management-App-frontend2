@@ -1,10 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
 import '../../models/product_model.dart';
+import '../../models/customer_model.dart';
+import '../../models/sale_model.dart';
 import '../../widgets/widgets.dart';
 import '../../services/sample_data_service.dart';
+import '../../services/sales_service.dart';
+import '../../services/inventory_service.dart';
+import '../../services/customer_service.dart';
+import '../../services/receipt_service.dart';
+import '../../services/notification_service.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/store_provider.dart';
 
 /// Production-ready POS screen with excellent UX
 /// Optimized for speed and ease of use
@@ -25,6 +35,16 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
 
   String _selectedCategory = 'All';
   late AnimationController _cartAnimationController;
+  
+  // Services
+  final SalesService _salesService = SalesService(InventoryService(), CustomerService());
+  final InventoryService _inventoryService = InventoryService();
+  final CustomerService _customerService = CustomerService();
+  final ReceiptService _receiptService = ReceiptService();
+  final NotificationService _notificationService = NotificationService();
+  
+  CustomerModel? _selectedCustomer;
+  bool _isProcessingCheckout = false;
 
   @override
   void initState() {
@@ -574,28 +594,37 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
             width: double.infinity,
             height: 56,
             child: ElevatedButton(
-              onPressed: _checkout,
+              onPressed: _isProcessingCheckout ? null : _checkout,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.success,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.payment, size: 24),
-                  SizedBox(width: 10),
-                  Text(
-                    'Proceed to Payment',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
+              child: _isProcessingCheckout
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.payment, size: 24),
+                        SizedBox(width: 10),
+                        Text(
+                          'Proceed to Payment',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
             ),
           ),
         ],
@@ -681,14 +710,56 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
   }
 
   void _checkout() {
-    // TODO: Implement actual checkout
+    if (_isProcessingCheckout) return;
+    
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Checkout'),
-        content: Text(
-          'Total: ${NumberFormat.currency(symbol: '₹').format(_total)}\n\n'
-          'Choose payment method:',
+        title: const Text('Select Customer'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.person_add),
+              title: const Text('Walk-in Customer'),
+              subtitle: const Text('No loyalty points'),
+              onTap: () {
+                Navigator.pop(context);
+                _showPaymentDialog(null);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.search),
+              title: const Text('Find Customer'),
+              subtitle: const Text('Earn loyalty points'),
+              onTap: () {
+                Navigator.pop(context);
+                _findCustomer();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _findCustomer() async {
+    final phoneController = TextEditingController();
+    
+    final phone = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Phone Number'),
+        content: TextField(
+          controller: phoneController,
+          keyboardType: TextInputType.phone,
+          maxLength: 10,
+          decoration: const InputDecoration(
+            labelText: 'Customer Phone',
+            hintText: '10-digit number',
+            prefixIcon: Icon(Icons.phone),
+          ),
         ),
         actions: [
           TextButton(
@@ -696,32 +767,349 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _completeCheckout('Cash');
-            },
-            child: const Text('Cash'),
+            onPressed: () => Navigator.pop(context, phoneController.text.trim()),
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+    
+    if (phone == null || phone.isEmpty || phone.length != 10) return;
+    
+    try {
+      final customer = await _customerService.getCustomerByPhone(phone);
+      if (customer != null) {
+        setState(() => _selectedCustomer = customer);
+        _showPaymentDialog(customer);
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Customer not found: $phone'),
+            action: SnackBarAction(
+              label: 'Register',
+              onPressed: () => _registerNewCustomer(phone),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  Future<void> _registerNewCustomer(String phone) async {
+    final nameController = TextEditingController();
+    final emailController = TextEditingController();
+    
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Register Customer'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Customer Name *',
+                prefixIcon: Icon(Icons.person),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email (Optional)',
+                prefixIcon: Icon(Icons.email),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
+            onPressed: () => Navigator.pop(context, nameController.text.trim()),
+            child: const Text('Register'),
+          ),
+        ],
+      ),
+    );
+    
+    if (name == null || name.isEmpty) return;
+    
+    try {
+      final storeId = context.read<StoreProvider>().selectedStore?.id ?? '';
+      final userId = context.read<AuthProvider>().currentUser?.id ?? '';
+      
+      await _customerService.registerCustomer(
+        name: name,
+        phone: phone,
+        email: emailController.text.trim().isEmpty ? null : emailController.text.trim(),
+        storeId: storeId,
+        registeredByUserId: userId,
+      );
+      
+      final customer = await _customerService.getCustomerByPhone(phone);
+      if (customer != null) {
+        setState(() => _selectedCustomer = customer);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Customer registered successfully')),
+        );
+        _showPaymentDialog(customer);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  void _showPaymentDialog(CustomerModel? customer) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Select Payment Method'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (customer != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primarySubtle,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            customer.name,
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            customer.phone,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            const Text(
+              'Total Amount:',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+            Text(
+              NumberFormat.currency(symbol: '₹').format(_total),
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              _completeCheckout('Card');
+              _completeCheckout('Cash', customer);
             },
-            child: const Text('Card'),
+            icon: const Icon(Icons.money),
+            label: const Text('Cash'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _completeCheckout('Card', customer);
+            },
+            icon: const Icon(Icons.credit_card),
+            label: const Text('Card'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _completeCheckout('UPI', customer);
+            },
+            icon: const Icon(Icons.qr_code),
+            label: const Text('UPI'),
           ),
         ],
       ),
     );
   }
 
-  void _completeCheckout(String method) {
-    setState(() => _cartItems.clear());
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Payment successful via $method!'),
-        backgroundColor: AppColors.success,
+  Future<void> _completeCheckout(String paymentMethod, CustomerModel? customer) async {
+    if (_isProcessingCheckout) return;
+    setState(() => _isProcessingCheckout = true);
+    
+    try {
+      final storeId = context.read<StoreProvider>().selectedStore?.id ?? '';
+      final userId = context.read<AuthProvider>().currentUser?.id ?? '';
+      
+      // Create sale items
+      final items = _cartItems
+          .map((item) => SaleItem(
+                productId: item.product.id,
+                productName: item.product.name,
+                quantity: item.quantity,
+                unitPrice: item.product.sellingPrice,
+                totalPrice: item.total,
+              ))
+          .toList();
+      
+      // Complete sale
+      final saleModel = await _salesService.completeSale(
+        storeId: storeId,
+        userId: userId,
+        items: items,
+        paymentMethod: paymentMethod,
+        customerPhone: customer?.phone,
+        discountAmount: 0,
+      );
+      
+      // Generate and print receipt
+      await _showReceiptOptions(saleModel, customer);
+      
+      // Send notification
+      await _notificationService.sendSaleCompletedNotification(
+        saleId: saleModel.id,
+        amount: saleModel.totalAmount,
+        itemCount: saleModel.itemCount,
+      );
+      
+      // Clear cart
+      setState(() {
+        _cartItems.clear();
+        _selectedCustomer = null;
+        _isProcessingCheckout = false;
+      });
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sale completed! Payment: $paymentMethod'),
+          backgroundColor: AppColors.success,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      setState(() => _isProcessingCheckout = false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showReceiptOptions(SaleModel sale, CustomerModel? customer) async {
+    final action = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle, color: AppColors.success),
+            SizedBox(width: 8),
+            Text('Payment Successful!'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              NumberFormat.currency(symbol: '₹').format(sale.totalAmount),
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 32,
+                fontWeight: FontWeight.w700,
+                color: AppColors.success,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text('Sale ID: ${sale.id.substring(0, 8)}'),
+            const SizedBox(height: 16),
+            const Text('Would you like to print a receipt?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'skip'),
+            child: const Text('Skip'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, 'share'),
+            icon: const Icon(Icons.share),
+            label: const Text('Share'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, 'print'),
+            icon: const Icon(Icons.print),
+            label: const Text('Print'),
+          ),
+        ],
       ),
     );
+    
+    if (action == null || action == 'skip') return;
+    
+    try {
+      if (action == 'print') {
+        await _receiptService.printReceipt(
+          sale: sale,
+          storeName: context.read<StoreProvider>().selectedStore?.name ?? 'Store',
+          customer: customer,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Receipt sent to printer')),
+        );
+      } else if (action == 'share') {
+        await _receiptService.shareReceipt(
+          sale: sale,
+          storeName: context.read<StoreProvider>().selectedStore?.name ?? 'Store',
+          customer: customer,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Receipt error: $e')),
+      );
+    }
   }
 
   void _showCartDetails() {
