@@ -61,7 +61,7 @@ class NotificationsScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           final notifications = snap.data?.docs
-                  .map((d) => AppNotification.fromFirestore(d))
+                  .map((d) => NotificationModel.fromFirestore(d))
                   .toList() ??
           [];
           if (notifications.isEmpty) {
@@ -107,23 +107,21 @@ class NotificationsScreen extends StatelessWidget {
 }
 
 class _NotificationCard extends StatelessWidget {
-  final AppNotification notification;
+  final NotificationModel notification;
   const _NotificationCard({required this.notification});
 
   Color _typeColor() {
     switch (notification.type) {
       case NotificationType.lowStock:
         return AppColors.warning;
-      case NotificationType.festivalAlert:
-        return AppColors.accent;
-      case NotificationType.restockingRequired:
-        return AppColors.error;
-      case NotificationType.transferPending:
-        return AppColors.info;
-      case NotificationType.transferConfirmed:
+      case NotificationType.saleCompleted:
         return AppColors.success;
-      default:
+      case NotificationType.stockTransfer:
+        return AppColors.info;
+      case NotificationType.customerRegistered:
         return AppColors.primary;
+      case NotificationType.custom:
+        return AppColors.accent;
     }
   }
 
@@ -131,15 +129,13 @@ class _NotificationCard extends StatelessWidget {
     switch (notification.type) {
       case NotificationType.lowStock:
         return Icons.warning_amber_rounded;
-      case NotificationType.festivalAlert:
-        return Icons.celebration_outlined;
-      case NotificationType.restockingRequired:
-        return Icons.refresh_rounded;
-      case NotificationType.transferPending:
-        return Icons.swap_horiz_rounded;
-      case NotificationType.transferConfirmed:
+      case NotificationType.saleCompleted:
         return Icons.check_circle_outline;
-      default:
+      case NotificationType.stockTransfer:
+        return Icons.swap_horiz_rounded;
+      case NotificationType.customerRegistered:
+        return Icons.person_add_outlined;
+      case NotificationType.custom:
         return Icons.notifications_outlined;
     }
   }
@@ -209,7 +205,7 @@ class _NotificationCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(notification.body,
+                  Text(notification.message,
                       style: const TextStyle(
                           color: AppColors.textSecondary,
                           fontSize: 12,
