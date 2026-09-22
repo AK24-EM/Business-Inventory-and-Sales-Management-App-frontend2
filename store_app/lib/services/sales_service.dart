@@ -94,14 +94,14 @@ class SalesService {
 
   Future<List<SaleModel>> getSalesByStore(
       String storeId, DateTime from, DateTime to) async {
-    final snap = await _sales.where('storeId', isEqualTo: storeId).get();
-    final sales = snap.docs
-        .map(SaleModel.fromFirestore)
-        .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
-        .toList();
-    // Sort by timestamp descending (newest first)
-    sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return sales;
+    // Use Firestore query with orderBy for optimal performance
+    final snap = await _sales
+        .where('storeId', isEqualTo: storeId)
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+        .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(to))
+        .orderBy('timestamp', descending: true)
+        .get();
+    return snap.docs.map(SaleModel.fromFirestore).toList();
   }
 
   Future<List<SaleModel>> getAllSales(DateTime from, DateTime to) async {
@@ -116,24 +116,41 @@ class SalesService {
   }
 
   Future<List<SaleModel>> getCustomerSales(String customerId) async {
-    final snap = await _sales.where('customerId', isEqualTo: customerId).get();
-    final sales = snap.docs.map(SaleModel.fromFirestore).toList();
-    // Sort by timestamp descending (newest first)
-    sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return sales;
+    // Use Firestore query with orderBy for optimal performance
+    final snap = await _sales
+        .where('customerId', isEqualTo: customerId)
+        .orderBy('timestamp', descending: true)
+        .get();
+    return snap.docs.map(SaleModel.fromFirestore).toList();
+  }
+
+  Future<List<SaleModel>> getSalesByCustomerPhone(String phone) async {
+    // Query by customer phone number with timestamp sorting
+    final snap = await _sales
+        .where('customerPhone', isEqualTo: phone)
+        .orderBy('timestamp', descending: true)
+        .get();
+    return snap.docs.map(SaleModel.fromFirestore).toList();
+  }
+
+  Stream<List<SaleModel>> getSalesByCustomerPhoneStream(String phone) {
+    // Real-time stream of customer purchases sorted by newest first
+    return _sales
+        .where('customerPhone', isEqualTo: phone)
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(SaleModel.fromFirestore).toList());
   }
 
   Stream<List<SaleModel>> getTodaySalesStream(String storeId) {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
-    return _sales.where('storeId', isEqualTo: storeId).snapshots().map((snap) {
-      final sales = snap.docs
-          .map(SaleModel.fromFirestore)
-          .where((s) => !s.timestamp.isBefore(start))
-          .toList();
-      // Sort by timestamp descending (newest first)
-      sales.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      return sales;
-    });
+    // Use Firestore query with orderBy and timestamp filter
+    return _sales
+        .where('storeId', isEqualTo: storeId)
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(SaleModel.fromFirestore).toList());
   }
 }

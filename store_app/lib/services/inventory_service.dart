@@ -183,24 +183,25 @@ class InventoryService {
 
   Stream<List<StockMovement>> getMovementHistoryStream(
       String storeId, String productId) {
-    return _movements.where('storeId', isEqualTo: storeId).snapshots().map((snap) {
-      var list = snap.docs.map(StockMovement.fromFirestore).toList();
-      if (productId.isNotEmpty) {
-        list = list.where((m) => m.productId == productId).toList();
-      }
-      list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      return list;
-    });
+    Query<Map<String, dynamic>> query = _movements
+        .where('storeId', isEqualTo: storeId)
+        .orderBy('timestamp', descending: true);
+    
+    if (productId.isNotEmpty) {
+      query = query.where('productId', isEqualTo: productId);
+    }
+    
+    return query.snapshots().map((snap) =>
+        snap.docs.map(StockMovement.fromFirestore).toList());
   }
 
   Stream<List<StockTransfer>> getPendingTransfersStream(String storeId) {
     return _transfers
         .where('destinationStoreId', isEqualTo: storeId)
+        .where('status', isEqualTo: TransferStatus.pending.name)
+        .orderBy('initiatedAt', descending: true)
         .snapshots()
-        .map((snap) => snap.docs
-            .map(StockTransfer.fromFirestore)
-            .where((t) => t.status == TransferStatus.pending)
-            .toList());
+        .map((snap) => snap.docs.map(StockTransfer.fromFirestore).toList());
   }
 
   Future<void> _changeStock({
