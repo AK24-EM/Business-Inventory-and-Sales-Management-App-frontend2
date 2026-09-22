@@ -7,7 +7,11 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../widgets/store_header_widget.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/store_provider.dart';
+import '../../providers/sales_provider.dart';
+import '../../providers/inventory_provider.dart';
 import '../../models/user_model.dart';
+import '../../models/sale_model.dart';
+import '../../models/inventory_model.dart';
 
 /// Modern, enterprise-ready Store Manager Dashboard.
 /// Matches the employee-side UI design: blue gradient banner, segmented tabs,
@@ -29,8 +33,17 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   Widget build(BuildContext context) {
     final storeProvider = context.watch<StoreProvider>();
     final authProvider = context.watch<AuthProvider>();
+    final salesProvider = context.watch<SalesProvider>();
+    final inventoryProvider = context.watch<InventoryProvider>();
     final user = authProvider.currentUser;
     final store = storeProvider.selectedStore;
+    final storeId = store?.id ?? '';
+
+    if (storeId.isEmpty) {
+      return const Scaffold(
+        body: Center(child: Text('Please select a store')),
+      );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -38,8 +51,10 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
         child: RefreshIndicator(
           color: const Color(0xFF2563EB),
           onRefresh: () async {
-            await Future.delayed(const Duration(milliseconds: 600));
-            if (mounted) setState(() {});
+            await Future.wait([
+              salesProvider.loadSales(storeId),
+              inventoryProvider.loadInventory(storeId),
+            ]);
           },
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(
@@ -69,30 +84,57 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                   child: _buildQuickActionStation(),
                 ),
                 const SizedBox(height: 14),
-                if (!_inboundConfirmed)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _buildInboundDeliveryCard(),
-                  ),
-                if (!_inboundConfirmed) const SizedBox(height: 14),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildHeroKPIGrid(),
-                ),
-                const SizedBox(height: 14),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildTillsSupervisionSection(),
-                ),
-                const SizedBox(height: 14),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildCriticalStockSection(),
-                ),
-                const SizedBox(height: 14),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: _buildPendingApprovalsSection(),
+                
+                // Real-time KPIs with Firestore data
+                StreamBuilder<List<SaleModel>>(
+                  stream: salesProvider.watchTodaySales(storeId),
+                  builder: (context, salesSnap) {
+                    final sales = salesSnap.data ?? [];
+                    final todayRevenue = sales.fold<double>(0, (sum, sale) => sum + sale.totalAmount);
+                    final saleCount = sales.length;
+                    
+                    return StreamBuilder<List<InventoryModel>>(
+                      stream: inventoryProvider.watchLowStock(storeId),
+                      builder: (context, invSnap) {
+                        final lowStock = invSnap.data ?? [];
+                        final criticalStock = lowStock.where((inv) => inv.currentStock < 5).length;
+                        
+                        return Column(
+                          children: [
+                            if (!_inboundConfirmed)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: _buildInboundDeliveryCard(),
+                              ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: _buildHeroKPIGrid(
+                                todayRevenue: todayRevenue,
+                                saleCount: saleCount,
+                                lowStockCount: lowStock.length,
+                                criticalStockCount: criticalStock,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: _buildTillsSupervisionSection(sales),
+                            ),
+                            const SizedBox(height: 14),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: _buildCriticalStockSection(lowStock),
+                            ),
+                            const SizedBox(height: 14),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: _buildPendingApprovalsSection(),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  },
                 ),
               ],
             ),
@@ -532,24 +574,45 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
     );
   }
 
-  Widget _buildHeroKPIGrid() {
+  Widget _buildHeroKPIGrid({
+    required double todayRevenue,
+    required int saleCount,
+    required int lowStockCount,
+    required int criticalStockCount,
+  }) {
+    final avgRevenue = 106500.0; // You can calculate this from historical data
+    final revenueChange = ((todayRevenue - avgRevenue) / avgRevenue * 100);
+    final revenueChangeText = revenueChange >= 0 
+        ? '+${revenueChange.toStringAsFixed(1)}% vs avg'
+        : '${revenueChange.toStringAsFixed(1)}% vs avg';
+    
     return Column(
       children: [
         Row(
           children: [
             Expanded(child: _buildMetricCard(
-              title: "TODAY'S REVENUE", value: '₹1,25,480',
-              badgeText: '+14.8% vs avg', badgeIcon: Icons.trending_up_rounded,
-              badgeColor: const Color(0xFF10B981), badgeBg: const Color(0xFFECFDF5),
-              icon: Icons.currency_rupee_rounded, iconColor: const Color(0xFF2563EB), iconBg: const Color(0xFFEFF6FF),
+              title: "TODAY'S REVENUE", 
+              value: '₹${NumberFormat('#,##,###').format(todayRevenue.round())}',
+              badgeText: revenueChangeText, 
+              badgeIcon: revenueChange >= 0 ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+              badgeColor: revenueChange >= 0 ? const Color(0xFF10B981) : const Color(0xFFEF4444), 
+              badgeBg: revenueChange >= 0 ? const Color(0xFFECFDF5) : const Color(0xFFFEE2E2),
+              icon: Icons.currency_rupee_rounded, 
+              iconColor: const Color(0xFF2563EB), 
+              iconBg: const Color(0xFFEFF6FF),
               onTap: () => context.go('/manager/reports'),
             )),
             const SizedBox(width: 10),
             Expanded(child: _buildMetricCard(
-              title: 'STOCK HEALTH', value: '14 Low',
-              badgeText: '3 Critical SKUs', badgeIcon: Icons.warning_amber_rounded,
-              badgeColor: const Color(0xFFDC2626), badgeBg: const Color(0xFFFEE2E2),
-              icon: Icons.inventory_2_outlined, iconColor: const Color(0xFFEF4444), iconBg: const Color(0xFFFEF2F2),
+              title: 'STOCK HEALTH', 
+              value: '$lowStockCount Low',
+              badgeText: '$criticalStockCount Critical SKUs', 
+              badgeIcon: Icons.warning_amber_rounded,
+              badgeColor: const Color(0xFFDC2626), 
+              badgeBg: const Color(0xFFFEE2E2),
+              icon: Icons.inventory_2_outlined, 
+              iconColor: const Color(0xFFEF4444), 
+              iconBg: const Color(0xFFFEF2F2),
               onTap: () => context.go('/manager/inventory'),
             )),
           ],
@@ -558,18 +621,28 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
         Row(
           children: [
             Expanded(child: _buildMetricCard(
-              title: 'ACTIVE TILLS', value: '3 Live',
-              badgeText: '8 Staff On Duty', badgeIcon: Icons.people_rounded,
-              badgeColor: const Color(0xFF059669), badgeBg: const Color(0xFFECFDF5),
-              icon: Icons.point_of_sale_rounded, iconColor: const Color(0xFF047857), iconBg: const Color(0xFFECFDF5),
-              onTap: () {},
+              title: 'SALES TODAY', 
+              value: '$saleCount Orders',
+              badgeText: '${(saleCount / 3).round()} per Till Avg', 
+              badgeIcon: Icons.shopping_cart_rounded,
+              badgeColor: const Color(0xFF059669), 
+              badgeBg: const Color(0xFFECFDF5),
+              icon: Icons.point_of_sale_rounded, 
+              iconColor: const Color(0xFF047857), 
+              iconBg: const Color(0xFFECFDF5),
+              onTap: () => context.go('/manager/reports'),
             )),
             const SizedBox(width: 10),
             Expanded(child: _buildMetricCard(
-              title: 'PENDING APPROVALS', value: '5 Actions',
-              badgeText: 'Needs sign-off', badgeIcon: Icons.pending_actions_rounded,
-              badgeColor: const Color(0xFF6366F1), badgeBg: const Color(0xFFEEF2FF),
-              icon: Icons.pending_actions_rounded, iconColor: const Color(0xFF4F46E5), iconBg: const Color(0xFFEEF2FF),
+              title: 'PENDING APPROVALS', 
+              value: '5 Actions',
+              badgeText: 'Needs sign-off', 
+              badgeIcon: Icons.pending_actions_rounded,
+              badgeColor: const Color(0xFF6366F1), 
+              badgeBg: const Color(0xFFEEF2FF),
+              icon: Icons.pending_actions_rounded, 
+              iconColor: const Color(0xFF4F46E5), 
+              iconBg: const Color(0xFFEEF2FF),
               onTap: () => context.go('/manager/purchase-orders'),
             )),
           ],
@@ -628,12 +701,53 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
     );
   }
 
-  Widget _buildTillsSupervisionSection() {
-    final tills = [
-      {'till': 'Till #01', 'cashier': 'Alex Cashier', 'total': '₹41,300', 'cash': '₹12,400', 'upi': '₹28,900', 'orders': 52, 'status': 'HEALTHY', 'statusColor': const Color(0xFF10B981), 'statusBg': const Color(0xFFECFDF5)},
-      {'till': 'Till #02', 'cashier': 'Sarah Jenkins', 'total': '₹42,300', 'cash': '₹8,100', 'upi': '₹34,200', 'orders': 64, 'status': 'HEALTHY', 'statusColor': const Color(0xFF10B981), 'statusBg': const Color(0xFFECFDF5)},
-      {'till': 'Till #03', 'cashier': 'John Miller', 'total': '₹21,600', 'cash': '₹3,200', 'upi': '₹18,400', 'orders': 29, 'status': 'LOW FLOAT (₹3.2k)', 'statusColor': const Color(0xFFF59E0B), 'statusBg': const Color(0xFFFEF3C7)},
-    ];
+  Widget _buildTillsSupervisionSection(List<SaleModel> sales) {
+    // Group sales by employee for till analysis
+    final Map<String, List<SaleModel>> salesByEmployee = {};
+    for (final sale in sales) {
+      final key = sale.employeeName;
+      salesByEmployee.putIfAbsent(key, () => []).add(sale);
+    }
+    
+    final tills = salesByEmployee.entries.take(3).map((entry) {
+      final employeeSales = entry.value;
+      final total = employeeSales.fold<double>(0, (sum, sale) => sum + sale.totalAmount);
+      final cashSales = employeeSales.where((s) => s.paymentMode == PaymentMode.cash).fold<double>(0, (sum, sale) => sum + sale.totalAmount);
+      final upiSales = employeeSales.where((s) => s.paymentMode == PaymentMode.upi).fold<double>(0, (sum, sale) => sum + sale.totalAmount);
+      final orders = employeeSales.length;
+      
+      return {
+        'till': 'Till #${salesByEmployee.keys.toList().indexOf(entry.key) + 1}', 
+        'cashier': entry.key, 
+        'total': '₹${NumberFormat('#,##,###').format(total.round())}', 
+        'cash': '₹${NumberFormat('#,##,###').format(cashSales.round())}', 
+        'upi': '₹${NumberFormat('#,##,###').format(upiSales.round())}', 
+        'orders': orders, 
+        'status': cashSales < 5000 ? 'LOW FLOAT' : 'HEALTHY', 
+        'statusColor': cashSales < 5000 ? const Color(0xFFF59E0B) : const Color(0xFF10B981), 
+        'statusBg': cashSales < 5000 ? const Color(0xFFFEF3C7) : const Color(0xFFECFDF5),
+      };
+    }).toList();
+    
+    if (tills.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: const Center(
+          child: Column(
+            children: [
+              Icon(Icons.point_of_sale_outlined, size: 40, color: Color(0xFF94A3B8)),
+              SizedBox(height: 8),
+              Text('No till activity today', style: TextStyle(color: Color(0xFF64748B))),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -697,9 +811,34 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
     );
   }
 
-  Widget _buildCriticalStockSection() {
-    final criticalItems = [
-      {'name': 'Basmati Royal Rice 5kg', 'sku': 'SKU: BRR-501', 'stock': 6, 'minSafe': 15, 'image': 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500'},
+  Widget _buildCriticalStockSection(List<InventoryModel> lowStock) {
+    final criticalItems = lowStock.take(5).map((inv) => {
+      'name': inv.productName,
+      'sku': inv.sku ?? 'N/A',
+      'stock': inv.currentStock,
+      'minSafe': inv.minStockLevel,
+      'image': 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
+    }).toList();
+    
+    if (criticalItems.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: const Center(
+          child: Column(
+            children: [
+              Icon(Icons.check_circle_outline, size: 40, color: Color(0xFF10B981)),
+              SizedBox(height: 8),
+              Text('All stock levels healthy', style: TextStyle(color: Color(0xFF059669))),
+            ],
+          ),
+        ),
+      );
+    }
       {'name': 'Alfonso Mango Pulp 850g', 'sku': 'SKU: AMP-102', 'stock': 4, 'minSafe': 12, 'image': 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=500'},
       {'name': 'Aashirvaad Whole Wheat 10kg', 'sku': 'SKU: AWW-202', 'stock': 18, 'minSafe': 30, 'image': 'https://images.unsplash.com/photo-1574323347407-f5e1ad6d020b?w=500'},
     ];
