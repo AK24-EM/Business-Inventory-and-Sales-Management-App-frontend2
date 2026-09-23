@@ -15,7 +15,7 @@ class FestivalModel {
     required this.startDate,
     required this.endDate,
     this.advanceOrderDays = 14,
-    this.isActive = true,
+    this.isActive = true,  // Default to true
     required this.createdAt,
   });
 

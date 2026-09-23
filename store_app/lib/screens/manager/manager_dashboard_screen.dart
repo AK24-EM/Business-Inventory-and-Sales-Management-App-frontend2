@@ -12,6 +12,9 @@ import '../../providers/inventory_provider.dart';
 import '../../models/user_model.dart';
 import '../../models/sale_model.dart';
 import '../../models/inventory_model.dart';
+import '../../models/purchase_order_model.dart';
+import '../../services/purchase_order_service.dart';
+import '../../services/inventory_service.dart';
 
 /// Modern, enterprise-ready Store Manager Dashboard.
 /// Matches the employee-side UI design: blue gradient banner, segmented tabs,
@@ -24,9 +27,6 @@ class ManagerDashboardScreen extends StatefulWidget {
 }
 
 class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
-  bool _inboundConfirmed = false;
-  bool _poApproved = false;
-  bool _damageApproved = false;
   String _activeTab = 'Overview';
 
   @override
@@ -52,8 +52,8 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
           color: const Color(0xFF2563EB),
           onRefresh: () async {
             await Future.wait([
-              salesProvider.loadSales(storeId),
-              inventoryProvider.loadInventory(storeId),
+              storeProvider.loadStores(),
+              Future.delayed(const Duration(milliseconds: 500)),
             ]);
           },
           child: SingleChildScrollView(
@@ -101,11 +101,10 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                         
                         return Column(
                           children: [
-                            if (!_inboundConfirmed)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: _buildInboundDeliveryCard(),
-                              ),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 14),
+                              child: _buildInboundDeliveryCard(storeId, user),
+                            ),
                             Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 16),
                               child: _buildHeroKPIGrid(
@@ -114,6 +113,11 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                                 lowStockCount: lowStock.length,
                                 criticalStockCount: criticalStock,
                               ),
+                            ),
+                            const SizedBox(height: 14),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: _buildFestivalSurgeCard(),
                             ),
                             const SizedBox(height: 14),
                             Padding(
@@ -128,7 +132,7 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                             const SizedBox(height: 14),
                             Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 16),
-                              child: _buildPendingApprovalsSection(),
+                              child: _buildPendingApprovalsSection(storeId, user),
                             ),
                           ],
                         );
@@ -145,7 +149,7 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   }
 
   Widget _buildSegmentedTabs() {
-    final tabs = ['Overview', 'Approvals', 'Stock', 'Reports'];
+    final tabs = ['Overview', 'Restock', 'Festivals', 'Analytics', 'Approvals', 'Stock', 'Reports'];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
@@ -153,7 +157,7 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
       child: Row(
         children: tabs.map((tab) {
           final isSelected = _activeTab == tab;
-          final hasBadge = tab == 'Approvals';
+          final hasBadge = tab == 'Approvals' || tab == 'Restock';
           return Padding(
             padding: const EdgeInsets.only(right: 8),
             child: InkWell(
@@ -165,6 +169,12 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                   context.go('/manager/reports');
                 } else if (tab == 'Approvals') {
                   context.go('/manager/purchase-orders');
+                } else if (tab == 'Restock') {
+                  context.go('/manager/restocking');
+                } else if (tab == 'Festivals') {
+                  context.go('/manager/festivals');
+                } else if (tab == 'Analytics') {
+                  context.go('/manager/analytics');
                 }
               },
               borderRadius: BorderRadius.circular(10),
@@ -344,68 +354,134 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   }
 
   Widget _buildQuickActionStation() {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          flex: 5,
-          child: InkWell(
-            onTap: () => context.go('/manager/transfers'),
-            borderRadius: BorderRadius.circular(14),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2563EB),
+        Row(
+          children: [
+            Expanded(
+              flex: 5,
+              child: InkWell(
+                onTap: () => context.go('/manager/restocking'),
                 borderRadius: BorderRadius.circular(14),
-                boxShadow: [BoxShadow(color: const Color(0xFF2563EB).withValues(alpha: 0.28), blurRadius: 10, offset: const Offset(0, 4))],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                    child: const Icon(Icons.swap_horiz_rounded, color: Color(0xFF2563EB), size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('New Transfer', style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)),
-                        Text('Move Stock Between Stores', style: TextStyle(fontFamily: 'Poppins', fontSize: 10.5, color: Color(0xFFDBEAFE))),
-                      ],
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF065F46), Color(0xFF059669)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF059669).withValues(alpha: 0.28),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
-                  const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 16),
-                ],
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                        child: const Icon(Icons.autorenew_rounded, color: Color(0xFF059669), size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Smart Restock', style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)),
+                            Text('Auto-Order Low SKUs', style: TextStyle(fontFamily: 'Poppins', fontSize: 10.5, color: Color(0xFFA7F3D0))),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 16),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 3,
+              child: _buildSmallActionTile(
+                title: 'Transfer',
+                subtitle: 'Move Stock',
+                icon: Icons.swap_horiz_rounded,
+                iconColor: const Color(0xFF2563EB),
+                bgColor: const Color(0xFFEFF6FF),
+                borderColor: const Color(0xFFBFDBFE),
+                onTap: () => context.go('/manager/transfers'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 3,
+              child: _buildSmallActionTile(
+                title: 'Festivals',
+                subtitle: 'Surge Plan',
+                icon: Icons.celebration_rounded,
+                iconColor: const Color(0xFFD97706),
+                bgColor: const Color(0xFFFFFBEB),
+                borderColor: const Color(0xFFFDE68A),
+                onTap: () => context.go('/manager/festivals'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 3,
-          child: _buildSmallActionTile(
-            title: 'Procure',
-            subtitle: 'New PO',
-            icon: Icons.local_shipping_rounded,
-            iconColor: const Color(0xFF047857),
-            bgColor: const Color(0xFFECFDF5),
-            borderColor: const Color(0xFFA7F3D0),
-            onTap: () => context.go('/manager/purchase-orders'),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 3,
-          child: _buildSmallActionTile(
-            title: 'Damage',
-            subtitle: 'Log Report',
-            icon: Icons.broken_image_rounded,
-            iconColor: const Color(0xFFDC2626),
-            bgColor: const Color(0xFFFEF2F2),
-            borderColor: const Color(0xFFFECACA),
-            onTap: () => context.go('/manager/damaged'),
-          ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildSmallActionTile(
+                title: 'Analytics Hub',
+                subtitle: 'Revenue & Trends',
+                icon: Icons.auto_graph_rounded,
+                iconColor: const Color(0xFF7C3AED),
+                bgColor: const Color(0xFFF5F3FF),
+                borderColor: const Color(0xFFDDD6FE),
+                onTap: () => context.go('/manager/analytics'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSmallActionTile(
+                title: 'Customer RFM',
+                subtitle: 'VIPs & Churn',
+                icon: Icons.people_alt_rounded,
+                iconColor: const Color(0xFFDB2777),
+                bgColor: const Color(0xFFFDF2F8),
+                borderColor: const Color(0xFFFBCFE8),
+                onTap: () => context.go('/manager/customer-analytics'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSmallActionTile(
+                title: 'Procure PO',
+                subtitle: 'Vendor Orders',
+                icon: Icons.local_shipping_rounded,
+                iconColor: const Color(0xFF047857),
+                bgColor: const Color(0xFFECFDF5),
+                borderColor: const Color(0xFFA7F3D0),
+                onTap: () => context.go('/manager/purchase-orders'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildSmallActionTile(
+                title: 'Damage Log',
+                subtitle: 'Shrinkage',
+                icon: Icons.broken_image_rounded,
+                iconColor: const Color(0xFFDC2626),
+                bgColor: const Color(0xFFFEF2F2),
+                borderColor: const Color(0xFFFECACA),
+                onTap: () => context.go('/manager/damaged'),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -440,137 +516,347 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
               child: Icon(icon, color: iconColor, size: 16),
             ),
             const SizedBox(height: 8),
-            Text(title, style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-            Text(subtitle, style: const TextStyle(fontFamily: 'Poppins', fontSize: 9.5, color: Color(0xFF64748B))),
+            Text(title, style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)), maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(subtitle, style: const TextStyle(fontFamily: 'Poppins', fontSize: 9, color: Color(0xFF64748B)), maxLines: 1, overflow: TextOverflow.ellipsis),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInboundDeliveryCard() {
+  Widget _buildFestivalSurgeCard() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          colors: [Color(0xFF7C2D12), Color(0xFFC2410C), Color(0xFFEA580C)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _inboundConfirmed ? const Color(0xFF10B981).withValues(alpha: 0.4) : const Color(0xFF3B82F6).withValues(alpha: 0.4)),
-        boxShadow: [BoxShadow(color: const Color(0xFF0F172A).withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFEA580C).withValues(alpha: 0.28),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
+      padding: const EdgeInsets.all(16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: _inboundConfirmed ? const Color(0xFFECFDF5) : const Color(0xFFEFF6FF),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      _inboundConfirmed ? Icons.check_circle_rounded : Icons.local_shipping_rounded,
-                      color: _inboundConfirmed ? const Color(0xFF059669) : const Color(0xFF2563EB),
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
+                    Icon(Icons.auto_awesome_rounded, size: 12, color: Colors.white),
+                    SizedBox(width: 5),
                     Text(
-                      _inboundConfirmed ? 'INBOUND DELIVERED • TR-8842' : 'INBOUND DELIVERY • TR-8842',
+                      'AI FESTIVAL DEMAND RADAR',
                       style: TextStyle(
-                        fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700,
-                        color: _inboundConfirmed ? const Color(0xFF065F46) : const Color(0xFF1E40AF),
+                        fontFamily: 'Poppins',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
                         letterSpacing: 0.5,
                       ),
                     ),
                   ],
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: _inboundConfirmed ? const Color(0xFF10B981) : const Color(0xFF2563EB),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _inboundConfirmed ? 'RECEIVED' : 'ETA ~15m',
-                    style: const TextStyle(fontFamily: 'Poppins', fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white),
-                  ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: CachedNetworkImage(
-                        imageUrl: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500',
-                        width: 52, height: 52, fit: BoxFit.cover,
-                        placeholder: (context, url) => Container(
-                          color: const Color(0xFFF1F5F9),
-                          child: const Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
-                        ),
-                        errorWidget: (context, url, error) => Container(color: const Color(0xFFF1F5F9), child: const Icon(Icons.inventory_2, color: Color(0xFF94A3B8))),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Cold Pressed Olive Oil (1L)', style: TextStyle(fontFamily: 'Poppins', fontSize: 13.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-                          const SizedBox(height: 2),
-                          const Text('20 Units • Westend (Store 2) → Downtown', style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Container(width: 7, height: 7, decoration: const BoxDecoration(color: Color(0xFF3B82F6), shape: BoxShape.circle)),
-                              const SizedBox(width: 5),
-                              const Text('Driver: CargoVan #04 (R. Pawar)', style: TextStyle(fontFamily: 'Poppins', fontSize: 10.5, fontWeight: FontWeight.w500, color: Color(0xFF475569))),
-                            ],
-                          ),
-                        ],
+                    Icon(Icons.bolt_rounded, size: 12, color: Color(0xFFB45309)),
+                    SizedBox(width: 3),
+                    Text(
+                      '+45% Surge Expected',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFB45309),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                if (!_inboundConfirmed)
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() => _inboundConfirmed = true);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('✓ Inbound TR-8842 accepted! +20 units added to downtown stock.'),
-                        backgroundColor: Color(0xFF10B981), behavior: SnackBarBehavior.floating,
-                      ));
-                    },
-                    icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
-                    label: const Text('Confirm & Receive Stock (+20 units)'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white, elevation: 0,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      textStyle: const TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w700),
-                    ),
-                  )
-                else
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(8)),
-                    child: const Center(child: Text('✓ Received & Reconciled with Downtown Inventory', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF059669)))),
-                  ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Diwali & Festive Rush Stock Buffer',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
             ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Recommended 2.0x stock multiplier for Sweets, Dairy, Snacks & Dry Fruits. Place advance orders 10 days prior.',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11.5,
+              color: Colors.white.withValues(alpha: 0.9),
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => context.go('/manager/sales-analytics'),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.white60),
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text(
+                    'View Historical Spike',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => context.go('/manager/festivals'),
+                  icon: const Icon(Icons.celebration_rounded, size: 15),
+                  label: const Text('Prepare Buffer ›'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: const Color(0xFFC2410C),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    textStyle: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildInboundDeliveryCard(String storeId, UserModel? user) {
+    final inventoryService = context.read<InventoryService>();
+    return StreamBuilder<List<StockTransfer>>(
+      stream: inventoryService.getPendingTransfersStream(storeId),
+      builder: (context, snapshot) {
+        final pendingTransfers = snapshot.data ?? [];
+        if (pendingTransfers.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final transfer = pendingTransfers.first;
+        final transferCode = transfer.id.length > 6
+            ? transfer.id.substring(0, 6).toUpperCase()
+            : transfer.id;
+
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.4)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0F172A).withValues(alpha: 0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.local_shipping_rounded,
+                          color: Color(0xFF2563EB),
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'INBOUND IN TRANSIT • TR-$transferCode',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1E40AF),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${pendingTransfers.length} PENDING',
+                        style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFF6FF),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.inventory_2_rounded,
+                            color: Color(0xFF2563EB),
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                transfer.productName,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${transfer.quantity} Units • Sent by ${transfer.initiatedByUserName}',
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11.5,
+                                  color: Color(0xFF64748B),
+                                ),
+                              ),
+                              if (transfer.notes != null && transfer.notes!.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  'Note: ${transfer.notes}',
+                                  style: const TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 10.5,
+                                    fontStyle: FontStyle.italic,
+                                    color: Color(0xFF94A3B8),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        try {
+                          await inventoryService.confirmTransfer(
+                            transferId: transfer.id,
+                            confirmedByUserId: user?.id ?? 'manager',
+                            confirmedByUserName: user?.name ?? 'Store Manager',
+                          );
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(
+                                '✓ Inbound TR-$transferCode accepted! +${transfer.quantity} units of ${transfer.productName} added to inventory.',
+                              ),
+                              backgroundColor: const Color(0xFF10B981),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text('Failed to confirm transfer: $e'),
+                              backgroundColor: const Color(0xFFEF4444),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                      label: Text('Confirm & Receive Stock (+${transfer.quantity} units)'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        textStyle: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -580,7 +866,7 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
     required int lowStockCount,
     required int criticalStockCount,
   }) {
-    final avgRevenue = 106500.0; // You can calculate this from historical data
+    const avgRevenue = 106500.0; // You can calculate this from historical data
     final revenueChange = ((todayRevenue - avgRevenue) / avgRevenue * 100);
     final revenueChangeText = revenueChange >= 0 
         ? '+${revenueChange.toStringAsFixed(1)}% vs avg'
@@ -814,10 +1100,10 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   Widget _buildCriticalStockSection(List<InventoryModel> lowStock) {
     final criticalItems = lowStock.take(5).map((inv) => {
       'name': inv.productName,
-      'sku': inv.sku ?? 'N/A',
+      'sku': 'ID: ${inv.productId.length > 8 ? inv.productId.substring(0, 8) : inv.productId}',
       'stock': inv.currentStock,
-      'minSafe': inv.minStockLevel,
-      'image': 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
+      'minSafe': inv.minimumStockLevel,
+      'image': inv.imageUrl ?? 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
     }).toList();
     
     if (criticalItems.isEmpty) {
@@ -839,9 +1125,6 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
         ),
       );
     }
-      {'name': 'Alfonso Mango Pulp 850g', 'sku': 'SKU: AMP-102', 'stock': 4, 'minSafe': 12, 'image': 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=500'},
-      {'name': 'Aashirvaad Whole Wheat 10kg', 'sku': 'SKU: AWW-202', 'stock': 18, 'minSafe': 30, 'image': 'https://images.unsplash.com/photo-1574323347407-f5e1ad6d020b?w=500'},
-    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -849,15 +1132,15 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('RESTOCK REQUIRED (14 SKUS)', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B), letterSpacing: 0.6)),
-            InkWell(onTap: () => context.go('/manager/inventory'), child: const Text('View All Inventory ›', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF2563EB)))),
+            Text('RESTOCK REQUIRED (${criticalItems.length} SKUS)', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B), letterSpacing: 0.6)),
+            InkWell(onTap: () => context.go('/manager/restocking'), child: const Text('Smart Restock Hub ›', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF2563EB)))),
           ],
         ),
         const SizedBox(height: 10),
         ...criticalItems.map((item) {
           final stock = item['stock'] as int;
           final min = item['minSafe'] as int;
-          final pct = (stock / min).clamp(0.0, 1.0);
+          final pct = min > 0 ? (stock / min).clamp(0.0, 1.0) : 0.0;
           return Container(
             margin: const EdgeInsets.only(bottom: 10),
             padding: const EdgeInsets.all(12),
@@ -898,7 +1181,9 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                     Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2), decoration: BoxDecoration(color: const Color(0xFFFEE2E2), borderRadius: BorderRadius.circular(6)), child: Text('$stock LEFT', style: const TextStyle(fontFamily: 'Poppins', fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)))),
                     const SizedBox(height: 6),
                     InkWell(
-                      onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added ${item['name']} to Vendor PO queue.'), behavior: SnackBarBehavior.floating, backgroundColor: const Color(0xFF2563EB))),
+                      onTap: () {
+                        context.go('/manager/restocking');
+                      },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFBFDBFE))),
@@ -915,80 +1200,263 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
     );
   }
 
-  Widget _buildPendingApprovalsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('PENDING MANAGER APPROVALS', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B), letterSpacing: 0.6)),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE2E8F0)), boxShadow: [BoxShadow(color: const Color(0xFF0F172A).withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 2))]),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFEEF2FF), borderRadius: BorderRadius.circular(6)), child: const Text('PO-4091 • ITC HUB', style: TextStyle(fontFamily: 'Poppins', fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF4338CA)))),
-                  const Text('₹34,800.00', style: TextStyle(fontFamily: 'Poppins', fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text('Weekly staples replenishment (Rice, Atta, Ghee)', style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: Color(0xFF475569))),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: OutlinedButton(onPressed: () => context.go('/manager/purchase-orders'), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 8), side: const BorderSide(color: Color(0xFFCBD5E1)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: const Text('View Items', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF475569))))),
-                  const SizedBox(width: 10),
-                  Expanded(child: ElevatedButton(
-                    onPressed: _poApproved ? null : () {
-                      setState(() => _poApproved = true);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✓ PO-4091 Approved & Dispatched to Supplier!'), backgroundColor: Color(0xFF10B981), behavior: SnackBarBehavior.floating));
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                    child: Text(_poApproved ? 'Approved ✓' : 'Approve PO', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700)),
-                  )),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFE2E8F0)), boxShadow: [BoxShadow(color: const Color(0xFF0F172A).withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 2))]),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(6)), child: const Text('DM-0492 • 3 JARS BROKEN', style: TextStyle(fontFamily: 'Poppins', fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)))),
-                  const Text('-₹420.00', style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFEF4444))),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text('Transit jar seal leak on Alfonso Mango Pulp • Reported by Alex', style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: Color(0xFF475569))),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: OutlinedButton(onPressed: () => context.go('/manager/damaged'), style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 8), side: const BorderSide(color: Color(0xFFCBD5E1)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), child: const Text('Audit Photos', style: TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF475569))))),
-                  const SizedBox(width: 10),
-                  Expanded(child: ElevatedButton(
-                    onPressed: _damageApproved ? null : () {
-                      setState(() => _damageApproved = true);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✓ Write-off DM-0492 verified and booked to shrinkage.'), backgroundColor: Color(0xFF10B981), behavior: SnackBarBehavior.floating));
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444), foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                    child: Text(_damageApproved ? 'Approved ✓' : 'Approve Write-off', style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, fontWeight: FontWeight.w700)),
-                  )),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
+  Widget _buildPendingApprovalsSection(String storeId, UserModel? user) {
+    return StreamBuilder<List<PurchaseOrderModel>>(
+      stream: PurchaseOrderService().watchPurchaseOrdersByStatus(storeId, POStatus.submitted),
+      builder: (context, snapshot) {
+        final pendingPOs = snapshot.data ?? [];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'PENDING MANAGER APPROVALS',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF64748B),
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                if (pendingPOs.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEEF2FF),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${pendingPOs.length} Awaiting Sign-off',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF4338CA),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (pendingPOs.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFECFDF5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check_circle_rounded,
+                        color: Color(0xFF10B981),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'All Purchase Orders Up to Date',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          Text(
+                            'No pending PO approvals waiting for manager sign-off.',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 11,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => context.go('/manager/purchase-orders'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFBFDBFE)),
+                        ),
+                        child: const Text(
+                          'View POs',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF2563EB),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ...pendingPOs.take(3).map((po) {
+                final itemsSummary = po.items.map((i) => i.productName).take(2).join(', ');
+                final extraCount = po.items.length > 2 ? ' +${po.items.length - 2} more' : '';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEEF2FF),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '${po.poNumber} • ${po.supplierName}',
+                              style: const TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF4338CA),
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '₹${NumberFormat('#,##,###.00').format(po.totalAmount)}',
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Items: $itemsSummary$extraCount',
+                        style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 12,
+                          color: Color(0xFF475569),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => context.go('/manager/purchase-orders'),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                side: const BorderSide(color: Color(0xFFCBD5E1)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text(
+                                'View Items',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF475569),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () async {
+                                try {
+                                  await PurchaseOrderService().approvePurchaseOrder(
+                                    po.id,
+                                    user?.name ?? 'Store Manager',
+                                  );
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                      content: Text(
+                                        '✓ ${po.poNumber} Approved & Dispatched to ${po.supplierName}!',
+                                      ),
+                                      backgroundColor: const Color(0xFF10B981),
+                                      behavior: SnackBarBehavior.floating,
+                                    ));
+                                  }
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                      content: Text('Failed to approve PO: $e'),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                    ));
+                                  }
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text(
+                                'Approve PO',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        );
+      },
     );
   }
 

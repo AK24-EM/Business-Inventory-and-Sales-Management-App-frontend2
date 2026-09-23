@@ -71,9 +71,9 @@ class ManagerShell extends StatelessWidget {
               label: 'Procurement',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.insights_rounded, size: 22),
-              activeIcon: Icon(Icons.insights_rounded, size: 22),
-              label: 'Reports',
+              icon: Icon(Icons.auto_graph_outlined, size: 22),
+              activeIcon: Icon(Icons.auto_graph_rounded, size: 22),
+              label: 'Analytics',
             ),
           ],
         ),
@@ -91,12 +91,15 @@ class ManagerShell extends StatelessWidget {
     }
     if (location.startsWith('/manager/purchase-orders') ||
         location.startsWith('/manager/suppliers') ||
-        location.startsWith('/manager/damaged')) {
+        location.startsWith('/manager/damaged') ||
+        location.startsWith('/manager/restocking')) {
       return 3;
     }
     if (location.startsWith('/manager/reports') ||
         location.startsWith('/manager/sales-analytics') ||
-        location.startsWith('/manager/customer-analytics')) {
+        location.startsWith('/manager/customer-analytics') ||
+        location.startsWith('/manager/festivals') ||
+        location.startsWith('/manager/analytics')) {
       return 4;
     }
     return 0;
@@ -117,7 +120,7 @@ class ManagerShell extends StatelessWidget {
         context.go('/manager/purchase-orders');
         break;
       case 4:
-        context.go('/manager/reports');
+        context.go('/manager/analytics');
         break;
     }
   }

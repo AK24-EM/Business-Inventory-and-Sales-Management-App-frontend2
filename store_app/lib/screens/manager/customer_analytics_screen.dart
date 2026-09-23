@@ -232,7 +232,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.warning.withOpacity(0.3),
+                      color: AppColors.warning.withValues(alpha: 0.3),
                       blurRadius: 12,
                       offset: const Offset(0, 6),
                     ),
@@ -243,7 +243,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
+                        color: Colors.white.withValues(alpha: 0.2),
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
@@ -369,7 +369,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(icon, color: color, size: 20),
@@ -404,9 +404,9 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -508,7 +508,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
               dotData: FlDotData(show: true),
               belowBarData: BarAreaData(
                 show: true,
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha: 0.1),
               ),
             ),
           ],
@@ -545,7 +545,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
         children: customers.take(5).map((customer) {
           return ListTile(
             leading: CircleAvatar(
-              backgroundColor: AppColors.primary.withOpacity(0.1),
+              backgroundColor: AppColors.primary.withValues(alpha: 0.1),
               child: Text(
                 customer.name[0].toUpperCase(),
                 style: const TextStyle(
@@ -606,7 +606,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
             width: 50,
             height: 50,
             decoration: BoxDecoration(
-              color: rankColor.withOpacity(0.2),
+              color: rankColor.withValues(alpha: 0.2),
               shape: BoxShape.circle,
             ),
             child: Center(
@@ -665,7 +665,7 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(

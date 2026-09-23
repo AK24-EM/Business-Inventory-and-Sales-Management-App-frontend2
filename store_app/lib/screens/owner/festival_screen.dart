@@ -201,56 +201,254 @@ class _FestivalScreenState extends State<FestivalScreen>
   }
 }
 
-class _FestivalsTab extends StatelessWidget {
+class _FestivalsTab extends StatefulWidget {
   final FirebaseFirestore db;
   const _FestivalsTab({required this.db});
 
   @override
+  State<_FestivalsTab> createState() => _FestivalsTabState();
+}
+
+class _FestivalsTabState extends State<_FestivalsTab> {
+  // Fallback mode: Use simple query without orderBy if index is not ready
+  // Toggle this to true if you see "The query requires an index" error
+  bool _useFallbackQuery = false;
+
+  @override
   Widget build(BuildContext context) {
+    // Build query based on fallback mode
+    Query<Map<String, dynamic>> query = widget.db
+        .collection(AppConstants.festivalsCollection)
+        .where('isActive', isEqualTo: true);
+    
+    // Add orderBy only if not in fallback mode (requires composite index)
+    if (!_useFallbackQuery) {
+      query = query.orderBy('startDate');
+    }
+
     return StreamBuilder<QuerySnapshot>(
-      stream: db
-          .collection(AppConstants.festivalsCollection)
-          .where('isActive', isEqualTo: true)
-          .orderBy('startDate')
-          .snapshots(),
+      stream: query.snapshots(),
       builder: (context, snap) {
-        if (snap.hasError || snap.connectionState == ConnectionState.waiting) {
-          if (snap.hasError) {
-            return const Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.celebration_outlined,
-                    size: 56, color: AppColors.textTertiary),
-                SizedBox(height: 12),
-                Text('No festivals added yet',
-                    style: TextStyle(color: AppColors.textSecondary)),
-              ]),
-            );
-          }
-          return const Center(child: CircularProgressIndicator());
-        }
-        final festivals = snap.data?.docs
-                .map(FestivalModel.fromFirestore)
-                .toList() ??
-            [];
-        if (festivals.isEmpty) {
-          return const Center(
+        // Log connection state
+        print('Festivals StreamBuilder state: ${snap.connectionState}');
+        
+        if (snap.hasError) {
+          print('Error loading festivals: ${snap.error}');
+          
+          // Check if error is about missing index
+          final errorMessage = snap.error.toString();
+          final isMissingIndex = errorMessage.contains('index') || 
+                                 errorMessage.contains('FAILED_PRECONDITION');
+          
+          return Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.celebration_outlined,
-                    size: 56, color: AppColors.textTertiary),
-                SizedBox(height: 12),
-                Text('No festivals added yet',
-                    style: TextStyle(color: AppColors.textSecondary)),
+                Icon(
+                  isMissingIndex ? Icons.build_circle_outlined : Icons.error_outline,
+                  size: 56,
+                  color: isMissingIndex ? AppColors.warning : AppColors.error,
+                ),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    isMissingIndex 
+                        ? 'Index building in progress...'
+                        : 'Error loading festivals',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    isMissingIndex
+                        ? 'Firestore is building the required index. This takes 5-10 minutes after deployment.'
+                        : errorMessage,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (isMissingIndex && !_useFallbackQuery)
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _useFallbackQuery = true;
+                      });
+                    },
+                    icon: const Icon(Icons.swap_horiz),
+                    label: const Text('Use Temporary Query'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.warning,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                if (!isMissingIndex)
+                  ElevatedButton(
+                    onPressed: () {
+                      // Trigger rebuild
+                      setState(() {});
+                    },
+                    child: const Text('Retry'),
+                  ),
+                if (isMissingIndex)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Deployment command:\nfirebase deploy --only firestore:indexes',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
               ],
             ),
           );
         }
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: festivals.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 10),
-          itemBuilder: (_, i) => _FestivalCard(festival: festivals[i]),
+        
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Loading festivals...'),
+              ],
+            ),
+          );
+        }
+        
+        final festivals = snap.data?.docs
+                .map(FestivalModel.fromFirestore)
+                .toList() ??
+            [];
+        
+        // Sort in-memory if using fallback query
+        if (_useFallbackQuery && festivals.isNotEmpty) {
+          festivals.sort((a, b) => a.startDate.compareTo(b.startDate));
+        }
+        
+        print('Loaded ${festivals.length} festivals');
+        for (var fest in festivals) {
+          print('Festival: ${fest.name}, isActive: ${fest.isActive}, startDate: ${fest.startDate}');
+        }
+        
+        if (festivals.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.celebration_outlined,
+                    size: 56, color: AppColors.textTertiary),
+                const SizedBox(height: 12),
+                const Text('No festivals added yet',
+                    style: TextStyle(color: AppColors.textSecondary)),
+                const SizedBox(height: 12),
+                const Text('Tap "Add Event" to create your first festival',
+                    style: TextStyle(
+                        color: AppColors.textTertiary, fontSize: 12)),
+                if (_useFallbackQuery)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.info_outline, 
+                              size: 16, color: AppColors.warning),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Using temporary query mode',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.warning,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        }
+        
+        return Column(
+          children: [
+            if (_useFallbackQuery)
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, 
+                        size: 18, color: AppColors.warning),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Temporary Query Mode',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.warning,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Index is building. Festivals are sorted in memory.',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.warning.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _useFallbackQuery = false;
+                        });
+                      },
+                      child: const Text('Test Index', style: TextStyle(fontSize: 11)),
+                    ),
+                  ],
+                ),
+              ),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: festivals.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (_, i) => _FestivalCard(festival: festivals[i]),
+              ),
+            ),
+          ],
         );
       },
     );
@@ -659,25 +857,55 @@ class _AddFestivalSheetState extends State<_AddFestivalSheet> {
           const SnackBar(content: Text('Select start and end dates')));
       return;
     }
+    
     setState(() => _saving = true);
-    final ref = widget.db
-        .collection(AppConstants.festivalsCollection)
-        .doc();
-    final festival = FestivalModel(
-      id: ref.id,
-      name: _nameCtrl.text.trim(),
-      startDate: _startDate!,
-      endDate: _endDate!,
-      advanceOrderDays: _advanceDays,
-      createdAt: DateTime.now(),
-    );
-    await ref.set(festival.toFirestore());
-    if (mounted) {
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Festival added.')));
+    
+    try {
+      final ref = widget.db
+          .collection(AppConstants.festivalsCollection)
+          .doc();
+      
+      final festival = FestivalModel(
+        id: ref.id,
+        name: _nameCtrl.text.trim(),
+        startDate: _startDate!,
+        endDate: _endDate!,
+        advanceOrderDays: _advanceDays,
+        isActive: true, // Explicitly set to true
+        createdAt: DateTime.now(),
+      );
+      
+      print('Saving festival: ${festival.name} with ID: ${festival.id}');
+      print('Festival data: ${festival.toFirestore()}');
+      
+      await ref.set(festival.toFirestore());
+      
+      print('Festival saved successfully');
+      
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✓ Festival "${festival.name}" added successfully'),
+            backgroundColor: AppColors.success,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error saving festival: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error adding festival: $e'),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-    if (mounted) setState(() => _saving = false);
   }
 
   @override

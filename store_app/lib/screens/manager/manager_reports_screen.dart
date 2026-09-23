@@ -333,11 +333,26 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _bannerStat('Revenue', '₹1,25,480', Icons.trending_up_rounded, const Color(0xFF6EE7B7)),
+                _bannerStat(
+                  'Revenue',
+                  '₹${NumberFormat('#,##,###').format((_summary?.totalRevenue ?? 0).round())}',
+                  Icons.trending_up_rounded,
+                  const Color(0xFF6EE7B7),
+                ),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
-                _bannerStat('Transactions', '148 Bills', Icons.receipt_rounded, const Color(0xFF93C5FD)),
+                _bannerStat(
+                  'Transactions',
+                  '${_summary?.totalTransactions ?? 0} Bills',
+                  Icons.receipt_rounded,
+                  const Color(0xFF93C5FD),
+                ),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
-                _bannerStat('Avg Basket', '₹847', Icons.shopping_bag_rounded, const Color(0xFFFDE68A)),
+                _bannerStat(
+                  'Avg Basket',
+                  '₹${NumberFormat('#,##,###').format((_summary?.averageTransactionValue ?? 0).round())}',
+                  Icons.shopping_bag_rounded,
+                  const Color(0xFFFDE68A),
+                ),
               ],
             ),
           ),

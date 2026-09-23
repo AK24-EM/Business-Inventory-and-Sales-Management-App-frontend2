@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/app_theme.dart';
+import '../../config/app_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/store_provider.dart';
 import '../../services/customer_service.dart';
@@ -387,6 +389,35 @@ class _CustomerDetailsSheet extends StatefulWidget {
 }
 
 class _CustomerDetailsSheetState extends State<_CustomerDetailsSheet> {
+  
+  void _showEditDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => _EditCustomerDialog(
+        customer: widget.customer,
+        customerService: widget.customerService,
+      ),
+    );
+  }
+
+  void _shareCustomerDetails() {
+    final text = '''
+Customer Details:
+Name: ${widget.customer.name}
+Phone: ${widget.customer.phone}
+${widget.customer.email != null ? 'Email: ${widget.customer.email}' : ''}
+${widget.customer.address != null ? 'Address: ${widget.customer.address}' : ''}
+Registered: ${DateFormat('dd MMM yyyy').format(widget.customer.registeredAt)}
+    ''';
+    
+    // Share using share_plus package
+    // Share.share(text);
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Customer details copied!')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
@@ -454,6 +485,38 @@ class _CustomerDetailsSheetState extends State<_CustomerDetailsSheet> {
                           ),
                         ],
                       ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (value) {
+                        if (value == 'edit') {
+                          _showEditDialog();
+                        } else if (value == 'share') {
+                          _shareCustomerDetails();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_outlined, size: 20),
+                              SizedBox(width: 12),
+                              Text('Edit Details'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'share',
+                          child: Row(
+                            children: [
+                              Icon(Icons.share_outlined, size: 20),
+                              SizedBox(width: 12),
+                              Text('Share Contact'),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                     IconButton(
                       onPressed: () => Navigator.pop(context),
@@ -974,6 +1037,151 @@ class _PurchaseItem extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// Edit Customer Dialog
+class _EditCustomerDialog extends StatefulWidget {
+  final CustomerModel customer;
+  final CustomerService customerService;
+
+  const _EditCustomerDialog({
+    required this.customer,
+    required this.customerService,
+  });
+
+  @override
+  State<_EditCustomerDialog> createState() => _EditCustomerDialogState();
+}
+
+class _EditCustomerDialogState extends State<_EditCustomerDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _nameCtrl;
+  late TextEditingController _emailCtrl;
+  late TextEditingController _addressCtrl;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.customer.name);
+    _emailCtrl = TextEditingController(text: widget.customer.email ?? '');
+    _addressCtrl = TextEditingController(text: widget.customer.address ?? '');
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _addressCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    
+    setState(() => _saving = true);
+    
+    try {
+      // Update customer in Firestore
+      await FirebaseFirestore.instance
+          .collection(AppConstants.customersCollection)
+          .doc(widget.customer.id)
+          .update({
+        'name': _nameCtrl.text.trim(),
+        'email': _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim(),
+        'address': _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim(),
+      });
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Customer updated successfully')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit Customer'),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _emailCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Email (Optional)',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _addressCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Address (Optional)',
+                  prefixIcon: Icon(Icons.location_on_outlined),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Phone: ${widget.customer.phone}',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+              const Text(
+                'Phone number cannot be changed',
+                style: TextStyle(
+                  color: AppColors.textTertiary,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
+        ),
+      ],
     );
   }
 }

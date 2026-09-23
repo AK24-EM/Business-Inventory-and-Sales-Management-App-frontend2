@@ -12,6 +12,7 @@ import '../../services/customer_service.dart';
 import '../../services/supplier_service.dart';
 import '../../models/supplier_model.dart';
 import '../../models/analytics_model.dart';
+import '../../models/user_model.dart';
 import '../../widgets/store_header_widget.dart';
 
 class RestockingScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _RestockingScreenState extends State<RestockingScreen> {
   List<RestockingRequirement> _requirements = [];
   final Map<String, int> _ownerQuantities = {};
   bool _loading = true;
+  String? _selectedStoreFilter;
 
   @override
   void initState() {
@@ -35,6 +37,10 @@ class _RestockingScreenState extends State<RestockingScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final storeProvider = context.read<StoreProvider>();
+    final auth = context.read<AuthProvider>();
+    if (auth.currentUser?.role == UserRole.manager && storeProvider.selectedStore != null) {
+      _selectedStoreFilter ??= storeProvider.selectedStore!.id;
+    }
     final products = context.read<ProductProvider>();
     final stores = storeProvider.stores;
     await products.loadProducts();
@@ -136,6 +142,10 @@ class _RestockingScreenState extends State<RestockingScreen> {
   @override
   Widget build(BuildContext context) {
     final fmt = NumberFormat('#,##,##0.00', 'en_IN');
+    final stores = context.watch<StoreProvider>().stores;
+    final displayedReqs = _selectedStoreFilter == null
+        ? _requirements
+        : _requirements.where((r) => r.storeId == _selectedStoreFilter).toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -152,10 +162,71 @@ class _RestockingScreenState extends State<RestockingScreen> {
             // 2. Emerald Procurement Hero Banner
             _buildRestockHeroBanner(fmt),
 
+            // Store Filter Chips
+            if (stores.length > 1)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: FilterChip(
+                          label: const Text('All Stores'),
+                          selected: _selectedStoreFilter == null,
+                          onSelected: (_) => setState(() => _selectedStoreFilter = null),
+                          selectedColor: const Color(0xFF059669),
+                          labelStyle: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: _selectedStoreFilter == null ? Colors.white : const Color(0xFF475569),
+                          ),
+                          backgroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            side: BorderSide(
+                              color: _selectedStoreFilter == null ? const Color(0xFF059669) : const Color(0xFFCBD5E1),
+                            ),
+                          ),
+                        ),
+                      ),
+                      ...stores.map((s) {
+                        final isSel = _selectedStoreFilter == s.id;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: FilterChip(
+                            label: Text(s.name),
+                            selected: isSel,
+                            onSelected: (_) => setState(() => _selectedStoreFilter = isSel ? null : s.id),
+                            selectedColor: const Color(0xFF059669),
+                            labelStyle: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: isSel ? Colors.white : const Color(0xFF475569),
+                            ),
+                            backgroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                              side: BorderSide(
+                                color: isSel ? const Color(0xFF059669) : const Color(0xFFCBD5E1),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+              ),
+
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : _requirements.isEmpty
+                  : displayedReqs.isEmpty
                       ? const Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -174,11 +245,11 @@ class _RestockingScreenState extends State<RestockingScreen> {
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.all(16),
-                          itemCount: _requirements.length,
+                          itemCount: displayedReqs.length,
                           separatorBuilder: (_, __) =>
                               const SizedBox(height: 10),
                           itemBuilder: (_, i) {
-                            final req = _requirements[i];
+                            final req = displayedReqs[i];
                             final key =
                                 '${req.storeId}_${req.productId}';
                             final qty = _ownerQuantities[key] ??
@@ -193,10 +264,10 @@ class _RestockingScreenState extends State<RestockingScreen> {
                             );
                           },
                         ),
-                ),
-              ],
             ),
-          ),
+          ],
+        ),
+      ),
     );
   }
 

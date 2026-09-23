@@ -3,13 +3,12 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../../config/app_theme.dart';
-import '../../config/app_constants.dart';
 import '../../models/sale_model.dart';
-import '../../models/product_model.dart';
 import '../../providers/store_provider.dart';
 import '../../services/sales_service.dart';
 import '../../services/customer_service.dart';
 import '../../services/inventory_service.dart';
+
 
 /// Comprehensive Sales Analytics Screen with charts and insights
 /// Accessible by Manager and Owner roles

@@ -3,11 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/store_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/sales_service.dart';
 import '../../services/inventory_service.dart';
 import '../../services/customer_service.dart';
 import '../../services/analytics_service.dart';
 import '../../models/analytics_model.dart';
+import '../../config/app_theme.dart';
 import '../../widgets/store_header_widget.dart';
 
 class OwnerDashboardScreen extends StatefulWidget {
@@ -62,6 +64,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final authProvider = context.watch<AuthProvider>();
+    final currentUser = authProvider.currentUser;
+    
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
@@ -79,9 +84,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // 1. Top Enterprise Store Header
-                      const StoreHeaderWidget(
+                      StoreHeaderWidget(
                         title: 'Owner Hub',
                         subtitle: 'MULTI-STORE HEADQUARTERS • Live Chain Control',
+                        onAvatarTap: () => _showProfileMenu(context, currentUser),
+                        onNotificationTap: () => context.go('/owner/notifications'),
                       ),
 
                       Padding(
@@ -1508,6 +1515,335 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // ── Profile Menu & Sign Out ──
+  void _showProfileMenu(BuildContext context, dynamic user) {
+    final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
+    final offset = renderBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+    final size = renderBox?.size ?? Size.zero;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx + size.width - 200,
+        offset.dy + size.height + 8,
+        offset.dx + size.width,
+        0,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: <PopupMenuEntry<String>>[
+        // User Info Header
+        PopupMenuItem<String>(
+          enabled: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                user?.name ?? 'Owner',
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                user?.email ?? '',
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 11,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDCFCE7),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'OWNER',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF16A34A),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        
+        // Profile
+        PopupMenuItem<String>(
+          value: 'profile',
+          child: const Row(
+            children: [
+              Icon(Icons.person_outline, size: 18, color: Color(0xFF64748B)),
+              SizedBox(width: 12),
+              Text(
+                'Profile',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Settings
+        PopupMenuItem<String>(
+          value: 'settings',
+          child: const Row(
+            children: [
+              Icon(Icons.settings_outlined, size: 18, color: Color(0xFF64748B)),
+              SizedBox(width: 12),
+              Text(
+                'Settings',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        const PopupMenuDivider(),
+        
+        // Sign Out
+        PopupMenuItem<String>(
+          value: 'logout',
+          child: const Row(
+            children: [
+              Icon(Icons.logout_rounded, size: 18, color: AppColors.error),
+              SizedBox(width: 12),
+              Text(
+                'Sign Out',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'logout') {
+        _showSignOutDialog(context);
+      } else if (value == 'profile') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile screen coming soon')),
+        );
+      } else if (value == 'settings') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Settings screen coming soon')),
+        );
+      }
+    });
+  }
+
+  void _showSignOutDialog(BuildContext context) {
+    final authProvider = context.read<AuthProvider>();
+    final user = authProvider.currentUser;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        contentPadding: const EdgeInsets.all(24),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Gradient Icon with Shadow
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.error,
+                    AppColors.error.withValues(alpha: 0.7),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.error.withValues(alpha: 0.3),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.logout_rounded,
+                color: Colors.white,
+                size: 36,
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Title
+            const Text(
+              'Sign Out',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Message
+            const Text(
+              'Are you sure you want to sign out?',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 14,
+                color: AppColors.textSecondary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+
+            // User Info Card
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        (user?.name ?? 'O')
+                            .split(' ')
+                            .map((e) => e.isNotEmpty ? e[0] : '')
+                            .take(2)
+                            .join()
+                            .toUpperCase(),
+                        style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user?.name ?? 'Owner',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        Text(
+                          user?.email ?? '',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11,
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: const BorderSide(color: AppColors.border),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      authProvider.signOut();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Sign Out',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -24,6 +24,9 @@ import '../screens/manager/customer_analytics_screen.dart';
 import '../screens/manager/damaged_products_screen.dart';
 import '../screens/manager/manager_reports_screen.dart';
 import '../screens/manager/sales_analytics_screen.dart';
+import '../screens/manager/manager_analytics_hub_screen.dart';
+import '../screens/manager/manager_restocking_screen.dart';
+import '../screens/manager/manager_festival_planning_screen.dart';
 import '../screens/owner/owner_shell.dart';
 import '../screens/owner/owner_dashboard_screen.dart';
 import '../screens/owner/analytics_screen.dart';
@@ -198,8 +201,20 @@ class AppRouter {
               builder: (context, state) => const SalesAnalyticsScreen(),
             ),
             GoRoute(
+              path: '/manager/analytics',
+              builder: (context, state) => const ManagerAnalyticsHubScreen(),
+            ),
+            GoRoute(
               path: '/manager/billing',
               builder: (context, state) => const BillingScreen(),
+            ),
+            GoRoute(
+              path: '/manager/restocking',
+              builder: (context, state) => const ManagerRestockingScreen(),
+            ),
+            GoRoute(
+              path: '/manager/festivals',
+              builder: (context, state) => const ManagerFestivalPlanningScreen(),
             ),
             GoRoute(
               path: '/manager/notifications',

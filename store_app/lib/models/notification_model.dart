@@ -2,76 +2,52 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum NotificationType {
   lowStock,
-  festivalAlert,
-  restockingRequired,
-  transferPending,
-  transferConfirmed,
-  systemAlert,
+  saleCompleted,
+  stockTransfer,
+  customerRegistered,
+  custom,
 }
 
-extension NotificationTypeExtension on NotificationType {
-  String get displayName {
-    switch (this) {
-      case NotificationType.lowStock:
-        return 'Low Stock Alert';
-      case NotificationType.festivalAlert:
-        return 'Festival Demand Alert';
-      case NotificationType.restockingRequired:
-        return 'Restocking Required';
-      case NotificationType.transferPending:
-        return 'Transfer Pending';
-      case NotificationType.transferConfirmed:
-        return 'Transfer Confirmed';
-      case NotificationType.systemAlert:
-        return 'System Alert';
-    }
-  }
-
-  static NotificationType fromString(String value) {
-    return NotificationType.values.firstWhere(
-      (e) => e.name == value,
-      orElse: () => NotificationType.systemAlert,
-    );
-  }
-}
-
-class AppNotification {
+class NotificationModel {
   final String id;
   final String title;
-  final String body;
+  final String message;
   final NotificationType type;
-  final String? storeId;
-  final String? referenceId; // productId, transferId, etc.
-  final bool isRead;
-  final List<String> targetRoles; // which roles should see this
+  final String? targetUserId;
   final String? targetStoreId;
+  final Map<String, dynamic>? data;
+  final bool isRead;
   final DateTime createdAt;
 
-  const AppNotification({
+  const NotificationModel({
     required this.id,
     required this.title,
-    required this.body,
+    required this.message,
     required this.type,
-    this.storeId,
-    this.referenceId,
-    this.isRead = false,
-    this.targetRoles = const [],
+    this.targetUserId,
     this.targetStoreId,
+    this.data,
+    required this.isRead,
     required this.createdAt,
   });
 
-  factory AppNotification.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return AppNotification(
+  factory NotificationModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>?;
+    if (data == null) {
+      throw Exception('Notification document is null');
+    }
+    return NotificationModel(
       id: doc.id,
-      title: data['title'] ?? '',
-      body: data['body'] ?? '',
-      type: NotificationTypeExtension.fromString(data['type'] ?? 'systemAlert'),
-      storeId: data['storeId'],
-      referenceId: data['referenceId'],
-      isRead: data['isRead'] ?? false,
-      targetRoles: List<String>.from(data['targetRoles'] ?? []),
-      targetStoreId: data['targetStoreId'],
+      title: data['title'] as String? ?? 'Notification',
+      message: data['message'] as String? ?? '',
+      type: NotificationType.values.firstWhere(
+        (e) => e.name == (data['type'] as String? ?? 'custom'),
+        orElse: () => NotificationType.custom,
+      ),
+      targetUserId: data['targetUserId'] as String?,
+      targetStoreId: data['targetStoreId'] as String?,
+      data: data['data'] as Map<String, dynamic>?,
+      isRead: data['isRead'] as bool? ?? false,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
@@ -79,29 +55,37 @@ class AppNotification {
   Map<String, dynamic> toFirestore() {
     return {
       'title': title,
-      'body': body,
+      'message': message,
       'type': type.name,
-      'storeId': storeId,
-      'referenceId': referenceId,
-      'isRead': isRead,
-      'targetRoles': targetRoles,
+      'targetUserId': targetUserId,
       'targetStoreId': targetStoreId,
+      'data': data,
+      'isRead': isRead,
       'createdAt': Timestamp.fromDate(createdAt),
     };
   }
 
-  AppNotification copyWith({bool? isRead}) {
-    return AppNotification(
-      id: id,
-      title: title,
-      body: body,
-      type: type,
-      storeId: storeId,
-      referenceId: referenceId,
+  NotificationModel copyWith({
+    String? id,
+    String? title,
+    String? message,
+    NotificationType? type,
+    String? targetUserId,
+    String? targetStoreId,
+    Map<String, dynamic>? data,
+    bool? isRead,
+    DateTime? createdAt,
+  }) {
+    return NotificationModel(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      message: message ?? this.message,
+      type: type ?? this.type,
+      targetUserId: targetUserId ?? this.targetUserId,
+      targetStoreId: targetStoreId ?? this.targetStoreId,
+      data: data ?? this.data,
       isRead: isRead ?? this.isRead,
-      targetRoles: targetRoles,
-      targetStoreId: targetStoreId,
-      createdAt: createdAt,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 }

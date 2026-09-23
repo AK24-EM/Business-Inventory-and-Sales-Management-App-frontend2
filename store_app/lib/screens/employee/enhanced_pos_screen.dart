@@ -37,9 +37,10 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
   late AnimationController _cartAnimationController;
   
   // Services
-  final SalesService _salesService = SalesService(InventoryService(), CustomerService());
   final InventoryService _inventoryService = InventoryService();
   final CustomerService _customerService = CustomerService();
+  late final SalesService _salesService =
+      SalesService(_inventoryService, _customerService);
   final ReceiptService _receiptService = ReceiptService();
   final NotificationService _notificationService = NotificationService();
   
@@ -574,6 +575,40 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
       ),
       child: Column(
         children: [
+          if (_selectedCustomer != null) ...[
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primarySubtle,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.person, size: 18, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Customer: ${_selectedCustomer!.name} (${_selectedCustomer!.phone})',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => setState(() => _selectedCustomer = null),
+                  ),
+                ],
+              ),
+            ),
+          ],
           _PriceRow(label: 'Subtotal', value: currencyFormat.format(_subtotal)),
           const SizedBox(height: 8),
           _PriceRow(
@@ -698,7 +733,10 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
           ),
           ElevatedButton(
             onPressed: () {
-              setState(() => _cartItems.clear());
+              setState(() {
+                _cartItems.clear();
+                _selectedCustomer = null;
+              });
               Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
@@ -711,6 +749,11 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
 
   void _checkout() {
     if (_isProcessingCheckout) return;
+    
+    if (_selectedCustomer != null) {
+      _showPaymentDialog(_selectedCustomer);
+      return;
+    }
     
     showDialog(
       context: context,
@@ -844,6 +887,7 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
     );
     
     if (name == null || name.isEmpty) return;
+    if (!mounted) return;
     
     try {
       final storeId = context.read<StoreProvider>().selectedStore?.id ?? '';
@@ -875,6 +919,7 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
   }
 
   void _showPaymentDialog(CustomerModel? customer) {
+    final activeCustomer = customer ?? _selectedCustomer;
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -883,7 +928,7 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (customer != null) ...[
+            if (activeCustomer != null) ...[
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -899,14 +944,14 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            customer.name,
+                            activeCustomer.name,
                             style: const TextStyle(
                               fontFamily: 'Poppins',
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                           Text(
-                            customer.phone,
+                            activeCustomer.phone,
                             style: const TextStyle(
                               fontSize: 12,
                               color: AppColors.textSecondary,
@@ -943,7 +988,7 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              _completeCheckout('Cash', customer);
+              _completeCheckout('Cash', activeCustomer);
             },
             icon: const Icon(Icons.money),
             label: const Text('Cash'),
@@ -951,7 +996,7 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              _completeCheckout('Card', customer);
+              _completeCheckout('Card', activeCustomer);
             },
             icon: const Icon(Icons.credit_card),
             label: const Text('Card'),
@@ -959,7 +1004,7 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context);
-              _completeCheckout('UPI', customer);
+              _completeCheckout('UPI', activeCustomer);
             },
             icon: const Icon(Icons.qr_code),
             label: const Text('UPI'),
@@ -974,14 +1019,20 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
     setState(() => _isProcessingCheckout = true);
     
     try {
-      final storeId = context.read<StoreProvider>().selectedStore?.id ?? '';
-      final userId = context.read<AuthProvider>().currentUser?.id ?? '';
+      final store = context.read<StoreProvider>().selectedStore;
+      final storeId = store?.id ?? '';
+      final storeName = store?.name ?? 'Store';
+      final currentUser = context.read<AuthProvider>().currentUser;
+      final employeeId = currentUser?.id ?? '';
+      final employeeName = currentUser?.name ?? 'Employee';
+      final activeCustomer = customer ?? _selectedCustomer;
       
       // Create sale items
       final items = _cartItems
           .map((item) => SaleItem(
                 productId: item.product.id,
                 productName: item.product.name,
+                category: item.product.category,
                 quantity: item.quantity,
                 unitPrice: item.product.sellingPrice,
                 totalPrice: item.total,
@@ -991,21 +1042,30 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
       // Complete sale
       final saleModel = await _salesService.completeSale(
         storeId: storeId,
-        userId: userId,
+        storeName: storeName,
         items: items,
-        paymentMethod: paymentMethod,
-        customerPhone: customer?.phone,
+        paymentMode: PaymentMode.values.firstWhere(
+          (e) => e.name.toLowerCase() == paymentMethod.toLowerCase(),
+          orElse: () => PaymentMode.cash,
+        ),
+        employeeId: employeeId,
+        employeeName: employeeName,
+        customerId: activeCustomer?.id,
+        customerName: activeCustomer?.name,
+        customerPhone: activeCustomer?.phone,
         discountAmount: 0,
       );
       
       // Generate and print receipt
-      await _showReceiptOptions(saleModel, customer);
+      await _showReceiptOptions(saleModel, activeCustomer);
       
       // Send notification
       await _notificationService.sendSaleCompletedNotification(
-        saleId: saleModel.id,
-        amount: saleModel.totalAmount,
-        itemCount: saleModel.itemCount,
+        invoiceNumber:
+            saleModel.invoiceNumber ?? 'INV-${saleModel.id.substring(0, 8)}',
+        totalAmount: saleModel.totalAmount,
+        employeeName: saleModel.employeeName,
+        storeId: saleModel.storeId,
       );
       
       // Clear cart
@@ -1085,13 +1145,20 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
     );
     
     if (action == null || action == 'skip') return;
+    if (!mounted) return;
+
+    final store = context.read<StoreProvider>().selectedStore;
+    final storeName = store?.name ?? 'Store';
+    final storeAddress = store?.address ?? '';
+    final storePhone = store?.phone ?? '';
     
     try {
       if (action == 'print') {
         await _receiptService.printReceipt(
           sale: sale,
-          storeName: context.read<StoreProvider>().selectedStore?.name ?? 'Store',
-          customer: customer,
+          storeName: storeName,
+          storeAddress: storeAddress,
+          storePhone: storePhone,
         );
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1100,8 +1167,9 @@ class _EnhancedPOSScreenState extends State<EnhancedPOSScreen>
       } else if (action == 'share') {
         await _receiptService.shareReceipt(
           sale: sale,
-          storeName: context.read<StoreProvider>().selectedStore?.name ?? 'Store',
-          customer: customer,
+          storeName: storeName,
+          storeAddress: storeAddress,
+          storePhone: storePhone,
         );
       }
     } catch (e) {
