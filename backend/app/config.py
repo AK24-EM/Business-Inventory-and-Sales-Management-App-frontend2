@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     GCS_BUCKET_NAME: str = os.getenv("GCS_BUCKET_NAME", "storeiq-media-bucket")
     
     class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = True
 
 settings = Settings()
