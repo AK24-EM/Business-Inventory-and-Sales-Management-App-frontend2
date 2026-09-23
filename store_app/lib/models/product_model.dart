@@ -37,17 +37,19 @@ class ProductModel {
 
   factory ProductModel.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    final purchase = (data['purchasePrice'] ?? data['costPrice'] ?? 0).toDouble();
+    final selling = (data['sellingPrice'] ?? 0).toDouble();
     return ProductModel(
       id: doc.id,
       name: data['name'] ?? '',
       category: data['category'] ?? '',
       description: data['description'] ?? '',
-      purchasePrice: (data['purchasePrice'] ?? 0).toDouble(),
-      sellingPrice: (data['sellingPrice'] ?? 0).toDouble(),
+      purchasePrice: purchase,
+      sellingPrice: selling,
       unit: data['unit'] ?? 'pcs',
       barcode: data['barcode'],
       supplierId: data['supplierId'],
-      imageUrl: data['imageUrl'],
+      imageUrl: data['imageUrl'] ?? data['image'],
       isActive: data['isActive'] ?? true,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -60,6 +62,7 @@ class ProductModel {
       'category': category,
       'description': description,
       'purchasePrice': purchasePrice,
+      'costPrice': purchasePrice,
       'sellingPrice': sellingPrice,
       'unit': unit,
       'barcode': barcode,

@@ -6,25 +6,16 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/sales_provider.dart';
 import '../../providers/store_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/product_provider.dart';
+import '../../providers/inventory_provider.dart';
 import '../../models/sale_model.dart';
+import '../../models/product_model.dart';
+import '../../models/inventory_model.dart';
+import '../../models/customer_model.dart';
+import '../../services/customer_service.dart';
 import '../../widgets/store_header_widget.dart';
 
 
-class CustomerInfo {
-  final String id;
-  final String name;
-  final String phone;
-  final String tier;
-  final int points;
-
-  const CustomerInfo({
-    required this.id,
-    required this.name,
-    required this.phone,
-    required this.tier,
-    required this.points,
-  });
-}
 
 class PosScreen extends StatefulWidget {
   const PosScreen({super.key});
@@ -38,206 +29,42 @@ class _PosScreenState extends State<PosScreen> {
   final TextEditingController _phoneCtrl = TextEditingController();
 
   String _selectedCategory = 'All';
-  bool _loyaltyRedeemed = true;
+  bool _loyaltyRedeemed = false;
   PaymentMode _selectedTender = PaymentMode.upi;
-  bool _cartInitialized = false;
 
-  final List<String> _categories = [
-    'All',
-    'Beverages',
-    'Packaged Foods',
-    'Personal Care',
-    'Dairy & Fresh',
-    'Snacks',
-  ];
-
-  static const List<CustomerInfo> _defaultCustomers = [
-    CustomerInfo(
-      id: 'cust_01',
-      name: 'Rahul Sharma',
-      phone: '+91 98451 22394',
-      tier: 'Gold Tier',
-      points: 480,
-    ),
-    CustomerInfo(
-      id: 'cust_02',
-      name: 'Priya Patel',
-      phone: '+91 98200 11223',
-      tier: 'Silver Tier',
-      points: 220,
-    ),
-    CustomerInfo(
-      id: 'cust_03',
-      name: 'Amit Verma',
-      phone: '+91 99100 44556',
-      tier: 'Platinum Tier',
-      points: 850,
-    ),
-    CustomerInfo(
-      id: 'cust_04',
-      name: 'Ananya Deshmukh',
-      phone: '+91 97654 32109',
-      tier: 'Gold Tier',
-      points: 520,
-    ),
-    CustomerInfo(
-      id: 'cust_05',
-      name: 'Vikram Malhotra',
-      phone: '+91 98111 22334',
-      tier: 'Bronze Tier',
-      points: 90,
-    ),
-    CustomerInfo(
-      id: 'cust_06',
-      name: 'Sneha Kulkarni',
-      phone: '+91 98333 44556',
-      tier: 'Silver Tier',
-      points: 310,
-    ),
-  ];
-
-  final List<CustomerInfo> _customCustomers = [];
-
-  CustomerInfo? _selectedCustomer;
-
-  List<CustomerInfo> get _allCustomers =>
-      [..._customCustomers, ..._defaultCustomers];
-
-  // Curated showcase products matching the inspiration design
-  final List<Map<String, dynamic>> _referenceProducts = [
-    {
-      'id': 'prod_almond_milk',
-      'name': 'Organic Almond Milk 1L',
-      'category': 'Beverages',
-      'sku': 'SKU: ALM-0924',
-      'price': 240.0,
-      'stock': 18,
-      'isLow': false,
-      'image': 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=500',
-    },
-    {
-      'id': 'prod_basmati_rice',
-      'name': 'Basmati Royal Rice 5kg',
-      'category': 'Packaged Foods',
-      'sku': 'SKU: RCE-4410',
-      'price': 550.0,
-      'stock': 6,
-      'isLow': true,
-      'image': 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=500',
-    },
-    {
-      'id': 'prod_olive_oil',
-      'name': 'Cold Pressed Olive Oil 500ml',
-      'category': 'Packaged Foods',
-      'sku': 'SKU: OIL-8B21',
-      'price': 420.0,
-      'stock': 14,
-      'isLow': false,
-      'image': 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=500',
-    },
-    {
-      'id': 'prod_coffee_beans',
-      'name': 'Dark Roast Coffee Beans 250g',
-      'category': 'Beverages',
-      'sku': 'SKU: COF-3309',
-      'price': 310.0,
-      'stock': 9,
-      'isLow': false,
-      'image': 'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=500',
-    },
-    {
-      'id': 'prod_mango_pulp',
-      'name': 'Alfonso Mango Pulp 850g',
-      'category': 'Packaged Foods',
-      'sku': 'SKU: AMP-102',
-      'price': 180.0,
-      'stock': 4,
-      'isLow': true,
-      'image': 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=500',
-    },
-    {
-      'id': 'prod_green_tea',
-      'name': 'Organic Green Tea 100 ct',
-      'category': 'Beverages',
-      'sku': 'SKU: OGT-884',
-      'price': 220.0,
-      'stock': 34,
-      'isLow': false,
-      'image': 'https://images.unsplash.com/photo-1564890369478-c89ca6d9cde9?w=500',
-    },
-  ];
+  // Live customer from Firestore lookup
+  CustomerModel? _selectedCustomer;
 
   @override
   void initState() {
     super.initState();
-    // Default to Rahul Sharma matching reference screenshot
-    _selectedCustomer = _defaultCustomers[0];
-    _phoneCtrl.text = _selectedCustomer!.phone;
-
+    // Cart starts empty — no demo seeding
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initDemoCartIfNeeded();
+      // Trigger product load
+      context.read<ProductProvider>().loadProducts();
     });
   }
 
-  void _initDemoCartIfNeeded() {
-    final sales = context.read<SalesProvider>();
-    if (sales.cartIsEmpty && !_cartInitialized) {
-      _cartInitialized = true;
-      // Pre-seed matching items from screenshot
-      sales.addToCart(CartItem(
-        productId: 'prod_almond_milk',
-        productName: 'Organic Almond Milk 1L',
-        category: 'Beverages',
-        unitPrice: 240.0,
-        quantity: 2,
-        availableStock: 18,
-      ));
-      sales.addToCart(CartItem(
-        productId: 'prod_basmati_rice',
-        productName: 'Basmati Royal Rice 5kg',
-        category: 'Packaged Foods',
-        unitPrice: 550.0,
-        quantity: 1,
-        availableStock: 6,
-      ));
-      sales.addToCart(CartItem(
-        productId: 'prod_olive_oil',
-        productName: 'Cold Pressed Olive Oil 500ml',
-        category: 'Packaged Foods',
-        unitPrice: 420.0,
-        quantity: 1,
-        availableStock: 14,
-      ));
-      if (_selectedCustomer != null) {
-        sales.setCustomer(
-          name: _selectedCustomer!.name,
-          phone: _selectedCustomer!.phone,
-          availablePoints: _selectedCustomer!.points,
-        );
-        sales.redeemPoints(_loyaltyRedeemed ? 100.0 : 0.0);
-      }
-    }
-  }
-
-  void _selectCustomer(CustomerInfo customer) {
+  void _selectCustomerModel(CustomerModel customer, {int loyaltyPoints = 0}) {
     setState(() {
       _selectedCustomer = customer;
       _phoneCtrl.text = customer.phone;
-      _loyaltyRedeemed = customer.points >= 100;
+      _loyaltyRedeemed = loyaltyPoints >= 100;
     });
 
     final sales = context.read<SalesProvider>();
     sales.setCustomer(
+      id: customer.id,
       name: customer.name,
       phone: customer.phone,
-      availablePoints: customer.points,
+      availablePoints: loyaltyPoints,
     );
     sales.redeemPoints(_loyaltyRedeemed ? 100.0 : 0.0);
 
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Attached customer: ${customer.name} (${customer.tier})'),
+        content: Text('Attached customer: ${customer.name}'),
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
       ),
@@ -374,22 +201,7 @@ class _PosScreenState extends State<PosScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 1. Customer Loyalty Bar with Find Out from Customers
-  // ─────────────────────────────────────────────────────────────────────────
   Widget _buildCustomerLoyaltySection() {
-    final phoneText = _phoneCtrl.text.trim();
-    // Check if there are live autocomplete suggestions
-    List<CustomerInfo> quickSuggestions = [];
-    if (phoneText.isNotEmpty &&
-        (_selectedCustomer == null || _selectedCustomer!.phone != phoneText)) {
-      final q = phoneText.toLowerCase();
-      quickSuggestions = _allCustomers.where((c) {
-        return c.phone.toLowerCase().contains(q) ||
-            c.name.toLowerCase().contains(q);
-      }).take(3).toList();
-    }
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -482,96 +294,6 @@ class _PosScreenState extends State<PosScreen> {
             ),
           ),
 
-          // Live quick autocomplete matches if typing
-          if (quickSuggestions.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFBFDBFE)),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF2563EB).withValues(alpha: 0.06),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(10, 6, 10, 2),
-                    child: Text(
-                      'Matching Customers (Tap to select):',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1D4ED8),
-                      ),
-                    ),
-                  ),
-                  ...quickSuggestions.map((c) => InkWell(
-                        onTap: () => _selectCustomer(c),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  const Icon(Icons.person_rounded,
-                                      size: 14, color: Color(0xFF2563EB)),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    c.name,
-                                    style: const TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF0F172A),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    c.phone,
-                                    style: const TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: 10.5,
-                                      color: Color(0xFF64748B),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFEF3C7),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  '${c.tier} • ${c.points} pts',
-                                  style: const TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF92400E),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      )),
-                ],
-              ),
-            ),
-          ],
-
           const SizedBox(height: 8),
 
           // Attached Customer Card (or Walk-in placeholder)
@@ -592,15 +314,12 @@ class _PosScreenState extends State<PosScreen> {
               ),
               child: Row(
                 children: [
-                  // Verified shield icon
                   const Icon(
                     Icons.verified_user_rounded,
                     color: Color(0xFF2563EB),
                     size: 19,
                   ),
                   const SizedBox(width: 8),
-
-                  // Name & Tier
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -622,7 +341,6 @@ class _PosScreenState extends State<PosScreen> {
                               ),
                             ),
                             const SizedBox(width: 4),
-                            // Switch customer button
                             InkWell(
                               onTap: () => _showCustomerFinderSheet(context),
                               child: const Icon(Icons.swap_horiz_rounded,
@@ -631,86 +349,18 @@ class _PosScreenState extends State<PosScreen> {
                           ],
                         ),
                         Text(
-                          '${_selectedCustomer!.tier} • ${_selectedCustomer!.points} pts',
+                          _selectedCustomer!.phone,
                           style: const TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w500,
                             color: Color(0xFF2563EB),
                           ),
                         ),
                       ],
                     ),
                   ),
-
-                  // Redeem Points Button (Dark Green Pill)
-                  if (_selectedCustomer!.points > 0)
-                    InkWell(
-                      onTap: () {
-                        setState(() {
-                          _loyaltyRedeemed = !_loyaltyRedeemed;
-                          final sales = context.read<SalesProvider>();
-                          final redeemAmount = _selectedCustomer!.points >= 100
-                              ? 100.0
-                              : _selectedCustomer!.points.toDouble();
-                          sales.redeemPoints(
-                              _loyaltyRedeemed ? redeemAmount : 0.0);
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(20),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: _loyaltyRedeemed
-                              ? const Color(0xFF065F46) // Forest green
-                              : const Color(0xFFE2E8F0),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: _loyaltyRedeemed
-                              ? [
-                                  BoxShadow(
-                                    color: const Color(0xFF065F46)
-                                        .withValues(alpha: 0.3),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _loyaltyRedeemed
-                                  ? Icons.stars_rounded
-                                  : Icons.stars_outlined,
-                              color: _loyaltyRedeemed
-                                  ? Colors.white
-                                  : const Color(0xFF475569),
-                              size: 14,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _loyaltyRedeemed
-                                  ? 'Redeem 100 pts (-₹100)'
-                                  : 'Apply Loyalty (-₹100)',
-                              style: TextStyle(
-                                fontFamily: 'Poppins',
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w700,
-                                color: _loyaltyRedeemed
-                                    ? Colors.white
-                                    : const Color(0xFF475569),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
                   const SizedBox(width: 6),
-                  // Clear button
                   InkWell(
                     onTap: _clearCustomer,
                     child: const Icon(Icons.close,
@@ -765,19 +415,22 @@ class _PosScreenState extends State<PosScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Customer Finder Modal (Find Out From Customers)
+  // Customer Finder Modal — loaded from Firestore
   // ─────────────────────────────────────────────────────────────────────────
   void _showCustomerFinderSheet(BuildContext context) {
+    final storeId = context.read<StoreProvider>().selectedStore?.id ?? '';
+    final customerService = CustomerService();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => _CustomerFinderModal(
-        customers: _allCustomers,
+      builder: (ctx) => _FirestoreCustomerFinderModal(
+        storeId: storeId,
+        customerService: customerService,
         selectedId: _selectedCustomer?.id,
         onSelect: (customer) {
           Navigator.pop(ctx);
-          _selectCustomer(customer);
+          _selectCustomerModel(customer);
         },
         onRegisterNew: () {
           Navigator.pop(ctx);
@@ -888,18 +541,19 @@ class _PosScreenState extends State<PosScreen> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 3. Category Filter Chips
+  // 3. Category Filter Chips — dynamic from Firestore
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildCategoryFilterRow() {
+    final categories = context.watch<ProductProvider>().categories;
     return SizedBox(
       height: 34,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _categories.length,
+        itemCount: categories.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
-          final cat = _categories[i];
+          final cat = categories[i];
           final isSelected = cat == _selectedCategory;
 
           return InkWell(
@@ -946,21 +600,38 @@ class _PosScreenState extends State<PosScreen> {
     );
   }
 
+
+
   // ─────────────────────────────────────────────────────────────────────────
-  // 4. Product Catalog Grid (2 Columns)
+  // 4. Product Catalog Grid — live from Firestore
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildProductGrid() {
     final q = _searchCtrl.text.toLowerCase().trim();
-    final items = _referenceProducts.where((p) {
+    final storeId =
+        context.read<StoreProvider>().selectedStore?.id ?? 'store_01';
+    final productProvider = context.watch<ProductProvider>();
+
+    final products = productProvider.products.where((p) {
+      if (!p.isActive) return false;
       final matchesCat =
-          _selectedCategory == 'All' || p['category'] == _selectedCategory;
+          _selectedCategory == 'All' || p.category == _selectedCategory;
       final matchesQuery = q.isEmpty ||
-          p['name'].toString().toLowerCase().contains(q) ||
-          p['sku'].toString().toLowerCase().contains(q);
+          p.name.toLowerCase().contains(q) ||
+          p.category.toLowerCase().contains(q) ||
+          (p.barcode?.toLowerCase().contains(q) ?? false);
       return matchesCat && matchesQuery;
     }).toList();
 
-    if (items.isEmpty) {
+    if (productProvider.isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 32),
+          child: CircularProgressIndicator(color: Color(0xFF2563EB)),
+        ),
+      );
+    }
+
+    if (products.isEmpty) {
       return Container(
         height: 160,
         margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -969,52 +640,75 @@ class _PosScreenState extends State<PosScreen> {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFFE2E8F0)),
         ),
-        child: const Center(
-          child: Text(
-            'No matching products found',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 13,
-              color: Color(0xFF64748B),
-            ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.inventory_2_outlined,
+                  size: 40, color: Color(0xFF94A3B8)),
+              const SizedBox(height: 8),
+              Text(
+                q.isNotEmpty
+                    ? 'No matching products'
+                    : 'No products added yet',
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+            ],
           ),
         ),
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          childAspectRatio: 0.82,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-        ),
-        itemCount: items.length,
-        itemBuilder: (context, i) {
-          final p = items[i];
-          return _buildProductCard(p);
-        },
-      ),
+    return StreamBuilder<List<InventoryModel>>(
+      stream: context.read<InventoryProvider>().watchInventory(storeId),
+      builder: (context, snapshot) {
+        final inventoryMap = <String, InventoryModel>{};
+        if (snapshot.hasData) {
+          for (final inv in snapshot.data!) {
+            inventoryMap[inv.productId] = inv;
+          }
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              childAspectRatio: 0.82,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+            ),
+            itemCount: products.length,
+            itemBuilder: (context, i) {
+              final p = products[i];
+              final inv = inventoryMap[p.id];
+              final stock = inv?.currentStock ?? 0;
+              final isLow = inv?.isLowStock ?? false;
+              return _buildProductCard(p, stock: stock, isLow: isLow);
+            },
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildProductCard(Map<String, dynamic> p) {
-    final bool isLow = p['isLow'] as bool;
-    final int stock = p['stock'] as int;
-    final String name = p['name'] as String;
-    final String sku = p['sku'] as String;
-    final double price = p['price'] as double;
-    final String image = p['image'] as String;
-
+  Widget _buildProductCard(ProductModel p,
+      {required int stock, required bool isLow}) {
+    final bool outOfStock = stock == 0;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+            color: outOfStock
+                ? const Color(0xFFFCA5A5)
+                : const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF0F172A).withValues(alpha: 0.03),
@@ -1026,7 +720,6 @@ class _PosScreenState extends State<PosScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Image with Stock Badge Overlay
           Stack(
             children: [
               ClipRRect(
@@ -1035,35 +728,42 @@ class _PosScreenState extends State<PosScreen> {
                 child: SizedBox(
                   height: 96,
                   width: double.infinity,
-                  child: CachedNetworkImage(
-                    imageUrl: image,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(
-                      color: const Color(0xFFF1F5F9),
-                      child: const Center(
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Color(0xFF2563EB),
+                  child: p.imageUrl != null && p.imageUrl!.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: p.imageUrl!,
+                          fit: BoxFit.cover,
+                          placeholder: (_, __) => Container(
+                            color: const Color(0xFFF1F5F9),
+                            child: const Center(
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF2563EB),
+                                ),
+                              ),
+                            ),
+                          ),
+                          errorWidget: (_, __, ___) => Container(
+                            color: const Color(0xFFF1F5F9),
+                            child: const Icon(
+                              Icons.inventory_2_outlined,
+                              color: Color(0xFF94A3B8),
+                              size: 32,
+                            ),
+                          ),
+                        )
+                      : Container(
+                          color: const Color(0xFFF1F5F9),
+                          child: const Icon(
+                            Icons.inventory_2_outlined,
+                            color: Color(0xFF94A3B8),
+                            size: 32,
                           ),
                         ),
-                      ),
-                    ),
-                    errorWidget: (_, __, ___) => Container(
-                      color: const Color(0xFFF1F5F9),
-                      child: const Icon(
-                        Icons.inventory_2_outlined,
-                        color: Color(0xFF94A3B8),
-                        size: 32,
-                      ),
-                    ),
-                  ),
                 ),
               ),
-
-              // Stock status badge in top-left
               Positioned(
                 top: 6,
                 left: 6,
@@ -1071,65 +771,49 @@ class _PosScreenState extends State<PosScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                   decoration: BoxDecoration(
-                    color: isLow
-                        ? const Color(0xFFFEE2E2) // Soft red
-                        : const Color(0xFFDCFCE7), // Soft emerald
+                    color: outOfStock
+                        ? const Color(0xFFFEE2E2)
+                        : isLow
+                            ? const Color(0xFFFEF3C7)
+                            : const Color(0xFFDCFCE7),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                      color: isLow
+                      color: outOfStock
                           ? const Color(0xFFFCA5A5)
-                          : const Color(0xFF86EFAC),
+                          : isLow
+                              ? const Color(0xFFFCD34D)
+                              : const Color(0xFF86EFAC),
                       width: 0.8,
                     ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isLow) ...[
-                        Container(
-                          width: 5,
-                          height: 5,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFDC2626),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 3),
-                        Text(
-                          '$stock Left (Low)',
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF991B1B),
-                          ),
-                        ),
-                      ] else ...[
-                        Text(
-                          '$stock In Stock',
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF166534),
-                          ),
-                        ),
-                      ],
-                    ],
+                  child: Text(
+                    outOfStock
+                        ? 'Out of Stock'
+                        : isLow
+                            ? '$stock Left (Low)'
+                            : '$stock In Stock',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w700,
+                      color: outOfStock
+                          ? const Color(0xFF991B1B)
+                          : isLow
+                              ? const Color(0xFF92400E)
+                              : const Color(0xFF166534),
+                    ),
                   ),
                 ),
               ),
             ],
           ),
-
-          // Product Details
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  name,
+                  p.name,
                   style: const TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 12,
@@ -1142,7 +826,7 @@ class _PosScreenState extends State<PosScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  sku,
+                  p.category,
                   style: const TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 10,
@@ -1156,7 +840,7 @@ class _PosScreenState extends State<PosScreen> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      '₹${price.toStringAsFixed(0)}',
+                      '\u20b9${p.sellingPrice.toStringAsFixed(0)}',
                       style: const TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 15,
@@ -1164,33 +848,40 @@ class _PosScreenState extends State<PosScreen> {
                         color: Color(0xFF0F172A),
                       ),
                     ),
-
-                    // Vibrant Blue "+" button
-                    InkWell(
-                      onTap: () => _addToCart(p),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
+                    if (!outOfStock)
+                      InkWell(
+                        onTap: () => _addProductToCart(p, stock: stock),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2563EB),
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF2563EB)
+                                    .withValues(alpha: 0.3),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(Icons.add,
+                              color: Colors.white, size: 18),
+                        ),
+                      )
+                    else
+                      Container(
                         width: 28,
                         height: 28,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF2563EB),
+                          color: const Color(0xFFE2E8F0),
                           borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF2563EB)
-                                  .withValues(alpha: 0.3),
-                              blurRadius: 4,
-                              offset: const Offset(0, 1),
-                            ),
-                          ],
                         ),
-                        child: const Icon(
-                          Icons.add,
-                          color: Colors.white,
-                          size: 18,
-                        ),
+                        child: const Icon(Icons.block,
+                            color: Color(0xFF94A3B8), size: 16),
                       ),
-                    ),
                   ],
                 ),
               ],
@@ -1201,21 +892,20 @@ class _PosScreenState extends State<PosScreen> {
     );
   }
 
-  void _addToCart(Map<String, dynamic> p) {
+  void _addProductToCart(ProductModel p, {required int stock}) {
     final sales = context.read<SalesProvider>();
     sales.addToCart(CartItem(
-      productId: p['id'],
-      productName: p['name'],
-      category: p['category'],
-      unitPrice: p['price'],
+      productId: p.id,
+      productName: p.name,
+      category: p.category,
+      unitPrice: p.sellingPrice,
       quantity: 1,
-      availableStock: p['stock'],
+      availableStock: stock,
     ));
-
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Added "${p['name']}" to active cart'),
+        content: Text('Added "${p.name}" to cart'),
         duration: const Duration(milliseconds: 1200),
         behavior: SnackBarBehavior.floating,
       ),
@@ -1280,11 +970,8 @@ class _PosScreenState extends State<PosScreen> {
     final totalUnits = sales.cartItemCount;
 
     final subtotal = sales.subtotal;
-    final loyaltyDiscount = _loyaltyRedeemed
-        ? (_selectedCustomer != null && _selectedCustomer!.points >= 100
-            ? 100.0
-            : (_selectedCustomer?.points.toDouble() ?? 0.0))
-        : 0.0;
+    // Loyalty discount is tracked by SalesProvider when customer is attached
+    final loyaltyDiscount = sales.pointsDiscount;
     final gst = ((subtotal - loyaltyDiscount).clamp(0.0, double.infinity)) * 0.05;
     final netPayable =
         (subtotal - loyaltyDiscount + gst).clamp(0.0, double.infinity);
@@ -2011,6 +1698,7 @@ class _PosScreenState extends State<PosScreen> {
   }
 
   void _simulateBarcodeScan() {
+    final barcodeCtrl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2039,8 +1727,19 @@ class _PosScreenState extends State<PosScreen> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Align barcode or enter SKU code manually:',
+              'Enter barcode or SKU code manually:',
               style: TextStyle(fontFamily: 'Poppins', fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: barcodeCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: 'Barcode / SKU',
+                prefixIcon: Icon(Icons.qr_code),
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
             ),
           ],
         ),
@@ -2052,9 +1751,27 @@ class _PosScreenState extends State<PosScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _addToCart(_referenceProducts[0]);
+              final code = barcodeCtrl.text.trim().toLowerCase();
+              if (code.isEmpty) return;
+              // Search in live products
+              final products = context.read<ProductProvider>().products;
+              final match = products.where((p) {
+                return (p.barcode?.toLowerCase() == code) ||
+                    p.name.toLowerCase().contains(code);
+              }).firstOrNull;
+              if (match != null) {
+                setState(() => _searchCtrl.text = match.name);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('No product found for "$code"'),
+                    duration: const Duration(seconds: 2),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
             },
-            child: const Text('Scan Sample SKU'),
+            child: const Text('Search'),
           ),
         ],
       ),
@@ -2064,61 +1781,105 @@ class _PosScreenState extends State<PosScreen> {
   void _showRegisterCustomerDialog() {
     final nameCtrl = TextEditingController();
     final phoneCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    bool isSaving = false;
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Register New Customer',
-            style: TextStyle(fontFamily: 'Poppins')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Full Name',
-                prefixIcon: Icon(Icons.person_outline),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Register New Customer',
+              style: TextStyle(fontFamily: 'Poppins')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Full Name *',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
               ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone Number *',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email (optional)',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSaving ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: phoneCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Phone Number',
-                prefixIcon: Icon(Icons.phone_outlined),
-              ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      if (nameCtrl.text.trim().isEmpty ||
+                          phoneCtrl.text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Name and phone are required')),
+                        );
+                        return;
+                      }
+                      setDialogState(() => isSaving = true);
+
+                      try {
+                        final authProvider = context.read<AuthProvider>();
+                        final storeProvider = context.read<StoreProvider>();
+                        final customerService = CustomerService();
+
+                        final customer = await customerService.registerCustomer(
+                          name: nameCtrl.text.trim(),
+                          phone: phoneCtrl.text.trim(),
+                          email: emailCtrl.text.trim().isEmpty
+                              ? null
+                              : emailCtrl.text.trim(),
+                          storeId:
+                              storeProvider.selectedStore?.id ?? 'store_01',
+                          registeredByUserId: authProvider.currentUser?.id ?? '',
+                        );
+
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _selectCustomerModel(customer);
+                      } catch (e) {
+                        setDialogState(() => isSaving = false);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                                content:
+                                    Text('Failed to register customer: $e')),
+                          );
+                        }
+                      }
+                    },
+              child: isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Register & Attach'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (nameCtrl.text.isNotEmpty && phoneCtrl.text.isNotEmpty) {
-                final newCust = CustomerInfo(
-                  id: 'cust_${DateTime.now().millisecondsSinceEpoch}',
-                  name: nameCtrl.text.trim(),
-                  phone: phoneCtrl.text.trim(),
-                  tier: 'Silver Tier',
-                  points: 100,
-                );
-
-                setState(() {
-                  _customCustomers.add(newCust);
-                });
-                _selectCustomer(newCust);
-
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Register & Attach'),
-          ),
-        ],
       ),
     );
   }
@@ -2181,6 +1942,7 @@ class _PosScreenState extends State<PosScreen> {
     );
 
     SaleModel? completedSale;
+    String? saleError;
     try {
       final store = storeProvider.selectedStore;
       final user = authProvider.currentUser;
@@ -2192,19 +1954,27 @@ class _PosScreenState extends State<PosScreen> {
         employeeName: user?.name ?? 'Cashier',
       );
     } catch (e) {
-      // completeSale catches internally and sets _error; we proceed to dialog
+      saleError = e.toString();
     }
 
     if (!mounted) return;
-    // Pop only the dialog using its own context — avoids GoRouter interference.
-    // Guard with loadingCtx!.mounted (the dialog context's own mounted flag)
-    // to satisfy use_build_context_synchronously across the async gap.
+    // Pop loading dialog
     if (loadingCtx != null && loadingCtx!.mounted && Navigator.of(loadingCtx!).canPop()) {
       Navigator.of(loadingCtx!).pop();
     }
 
+    if (completedSale == null || saleError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('⚠️ Could not complete sale to Firestore: ${saleError ?? "Unknown error"}'),
+          backgroundColor: const Color(0xFFEF4444),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
 
-    final invoiceNo = completedSale?.invoiceNumber ??
+    final invoiceNo = completedSale.invoiceNumber ??
         'INV-${DateTime.now().millisecondsSinceEpoch.toString().substring(6)}';
 
     showDialog(
@@ -2286,26 +2056,30 @@ class _PosScreenState extends State<PosScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Customer Finder Bottom Sheet Modal
+// Firestore-Backed Customer Finder Bottom Sheet Modal
 // ─────────────────────────────────────────────────────────────────────────────
-class _CustomerFinderModal extends StatefulWidget {
-  final List<CustomerInfo> customers;
+class _FirestoreCustomerFinderModal extends StatefulWidget {
+  final String storeId;
+  final CustomerService customerService;
   final String? selectedId;
-  final ValueChanged<CustomerInfo> onSelect;
+  final ValueChanged<CustomerModel> onSelect;
   final VoidCallback onRegisterNew;
 
-  const _CustomerFinderModal({
-    required this.customers,
+  const _FirestoreCustomerFinderModal({
+    required this.storeId,
+    required this.customerService,
     this.selectedId,
     required this.onSelect,
     required this.onRegisterNew,
   });
 
   @override
-  State<_CustomerFinderModal> createState() => _CustomerFinderModalState();
+  State<_FirestoreCustomerFinderModal> createState() =>
+      _FirestoreCustomerFinderModalState();
 }
 
-class _CustomerFinderModalState extends State<_CustomerFinderModal> {
+class _FirestoreCustomerFinderModalState
+    extends State<_FirestoreCustomerFinderModal> {
   final TextEditingController _filterCtrl = TextEditingController();
 
   @override
@@ -2314,30 +2088,8 @@ class _CustomerFinderModalState extends State<_CustomerFinderModal> {
     super.dispose();
   }
 
-  Color _getTierBg(String tier) {
-    if (tier.contains('Platinum')) return const Color(0xFFF3E8FF);
-    if (tier.contains('Gold')) return const Color(0xFFFEF3C7);
-    if (tier.contains('Silver')) return const Color(0xFFF1F5F9);
-    return const Color(0xFFFFF7ED);
-  }
-
-  Color _getTierText(String tier) {
-    if (tier.contains('Platinum')) return const Color(0xFF6B21A8);
-    if (tier.contains('Gold')) return const Color(0xFF92400E);
-    if (tier.contains('Silver')) return const Color(0xFF475569);
-    return const Color(0xFF9A3412);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final query = _filterCtrl.text.toLowerCase().trim();
-    final filtered = widget.customers.where((c) {
-      if (query.isEmpty) return true;
-      return c.name.toLowerCase().contains(query) ||
-          c.phone.toLowerCase().contains(query) ||
-          c.tier.toLowerCase().contains(query);
-    }).toList();
-
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.78,
@@ -2439,7 +2191,7 @@ class _CustomerFinderModalState extends State<_CustomerFinderModal> {
                       color: Color(0xFF0F172A),
                     ),
                     decoration: const InputDecoration(
-                      hintText: 'Search by customer name, phone, or tier...',
+                      hintText: 'Search by customer name, phone, or email...',
                       hintStyle: TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 11.5,
@@ -2464,19 +2216,52 @@ class _CustomerFinderModalState extends State<_CustomerFinderModal> {
 
           const SizedBox(height: 10),
 
-          // List of customers
+          // Real-time List of customers from Firestore
           Expanded(
-            child: filtered.isEmpty
-                ? Center(
+            child: StreamBuilder<List<CustomerModel>>(
+              stream: widget.customerService.getCustomersStream(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text(
+                      'Error loading customers: ${snapshot.error}',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        color: Color(0xFFEF4444),
+                      ),
+                    ),
+                  );
+                }
+
+                final allCustomers = snapshot.data ?? [];
+                final query = _filterCtrl.text.toLowerCase().trim();
+                final filtered = allCustomers.where((c) {
+                  if (query.isEmpty) return true;
+                  return c.name.toLowerCase().contains(query) ||
+                      c.phone.toLowerCase().contains(query) ||
+                      (c.email?.toLowerCase().contains(query) ?? false);
+                }).toList();
+
+                if (filtered.isEmpty) {
+                  return Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Icon(Icons.person_off_outlined,
                             size: 44, color: Color(0xFF94A3B8)),
                         const SizedBox(height: 8),
-                        const Text(
-                          'No customer found',
-                          style: TextStyle(
+                        Text(
+                          query.isEmpty
+                              ? 'No customers registered yet'
+                              : 'No customer found for "$query"',
+                          style: const TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
@@ -2490,149 +2275,120 @@ class _CustomerFinderModalState extends State<_CustomerFinderModal> {
                         ),
                       ],
                     ),
-                  )
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final c = filtered[i];
-                      final isSelected = widget.selectedId == c.id;
+                  );
+                }
 
-                      final initials = c.name.isNotEmpty
-                          ? c.name
-                              .split(' ')
-                              .map((w) => w.isNotEmpty ? w[0] : '')
-                              .take(2)
-                              .join()
-                              .toUpperCase()
-                          : 'C';
+                return ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, i) {
+                    final c = filtered[i];
+                    final isSelected = widget.selectedId == c.id;
 
-                      return InkWell(
-                        onTap: () => widget.onSelect(c),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
+                    final initials = c.name.isNotEmpty
+                        ? c.name
+                            .split(' ')
+                            .where((w) => w.isNotEmpty)
+                            .map((w) => w[0])
+                            .take(2)
+                            .join()
+                            .toUpperCase()
+                        : 'C';
+
+                    return InkWell(
+                      onTap: () => widget.onSelect(c),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? const Color(0xFFEFF6FF)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
                             color: isSelected
-                                ? const Color(0xFFEFF6FF)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: isSelected
-                                  ? const Color(0xFF2563EB)
-                                  : const Color(0xFFE2E8F0),
-                              width: isSelected ? 1.5 : 1,
-                            ),
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFFE2E8F0),
+                            width: isSelected ? 1.5 : 1,
                           ),
-                          child: Row(
-                            children: [
-                              // Avatar circle
-                              Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? const Color(0xFF2563EB)
-                                      : const Color(0xFFF1F5F9),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    initials,
-                                    style: TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      color: isSelected
-                                          ? Colors.white
-                                          : const Color(0xFF1E293B),
-                                    ),
+                        ),
+                        child: Row(
+                          children: [
+                            // Avatar circle
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? const Color(0xFF2563EB)
+                                    : const Color(0xFFF1F5F9),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  initials,
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: isSelected
+                                        ? Colors.white
+                                        : const Color(0xFF1E293B),
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
+                            ),
+                            const SizedBox(width: 10),
 
-                              // Name + Phone
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      c.name,
-                                      style: const TextStyle(
-                                        fontFamily: 'Poppins',
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF0F172A),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      c.phone,
-                                      style: const TextStyle(
-                                        fontFamily: 'Poppins',
-                                        fontSize: 11,
-                                        color: Color(0xFF64748B),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              // Tier & points
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
+                            // Name + Phone + Email
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 7, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: _getTierBg(c.tier),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      c.tier,
-                                      style: TextStyle(
-                                        fontFamily: 'Poppins',
-                                        fontSize: 9.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: _getTierText(c.tier),
-                                      ),
+                                  Text(
+                                    c.name,
+                                    style: const TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF0F172A),
                                     ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    '${c.points} pts',
+                                    c.phone.isNotEmpty
+                                        ? c.phone
+                                        : (c.email ?? 'No contact'),
                                     style: const TextStyle(
                                       fontFamily: 'Poppins',
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF2563EB),
+                                      fontSize: 11,
+                                      color: Color(0xFF64748B),
                                     ),
                                   ),
                                 ],
                               ),
+                            ),
 
-                              const SizedBox(width: 8),
-
-                              // Checkmark or Select icon
-                              Icon(
-                                isSelected
-                                    ? Icons.check_circle_rounded
-                                    : Icons.chevron_right_rounded,
-                                color: isSelected
-                                    ? const Color(0xFF2563EB)
-                                    : const Color(0xFF94A3B8),
-                                size: 18,
-                              ),
-                            ],
-                          ),
+                            // Checkmark or Select icon
+                            Icon(
+                              isSelected
+                                  ? Icons.check_circle_rounded
+                                  : Icons.chevron_right_rounded,
+                              color: isSelected
+                                  ? const Color(0xFF2563EB)
+                                  : const Color(0xFF94A3B8),
+                              size: 18,
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),

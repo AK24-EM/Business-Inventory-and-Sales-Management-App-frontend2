@@ -213,6 +213,10 @@ class AppRouter {
               builder: (context, state) => const ManagerRestockingScreen(),
             ),
             GoRoute(
+              path: '/manager/products',
+              builder: (context, state) => const ProductManagementScreen(),
+            ),
+            GoRoute(
               path: '/manager/festivals',
               builder: (context, state) => const ManagerFestivalPlanningScreen(),
             ),

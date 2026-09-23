@@ -1304,139 +1304,238 @@ class _TransferHistoryView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final historyItems = [
-      {
-        'id': 'TR-8830',
-        'product': 'Aashirvaad Whole Wheat 10kg',
-        'qty': 10,
-        'from': 'Downtown Hub',
-        'to': 'Suburban Metro',
-        'date': 'Yesterday, 4:15 PM',
-        'status': 'DELIVERED',
-        'color': const Color(0xFF10B981),
-      },
-      {
-        'id': 'TR-8828',
-        'product': 'Organic Green Tea 100ct',
-        'qty': 25,
-        'from': 'Westend Branch',
-        'to': 'Downtown Hub',
-        'date': '12 Sep 2026, 11:30 AM',
-        'status': 'DELIVERED',
-        'color': const Color(0xFF10B981),
-      },
-      {
-        'id': 'TR-8821',
-        'product': 'Dark Roast Coffee Beans 250g',
-        'qty': 30,
-        'from': 'Central Warehouse',
-        'to': 'Downtown Hub',
-        'date': '10 Sep 2026, 2:00 PM',
-        'status': 'RECONCILED',
-        'color': const Color(0xFF6366F1),
-      },
-    ];
+    final storeId = context.watch<StoreProvider>().selectedStore?.id ?? '';
+    final invProvider = context.watch<InventoryProvider>();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'PAST DISPATCHES & RECEIVED RUNS',
-          style: TextStyle(
-            fontFamily: 'Poppins',
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF64748B),
-            letterSpacing: 0.5,
-          ),
-        ),
-        const SizedBox(height: 10),
-        ...historyItems.map((item) {
-          return Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF0F172A).withValues(alpha: 0.03),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+    return StreamBuilder<List<StockTransfer>>(
+      stream: invProvider.watchAllTransfers(storeId),
+      builder: (context, snap) {
+        final liveTransfers = snap.data ?? [];
+        final historyTransfers = liveTransfers
+            .where((t) => t.status != TransferStatus.pending)
+            .toList();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'PAST DISPATCHES & RECEIVED RUNS',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF64748B),
+                letterSpacing: 0.5,
+              ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          item['id'] as String,
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF2563EB),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          item['date'] as String,
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 10.5,
-                            color: Color(0xFF94A3B8),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      item['product'] as String,
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${item['qty']} units  •  ${item['from']} → ${item['to']}',
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 11,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            const SizedBox(height: 10),
+            if (historyTransfers.isNotEmpty)
+              ...historyTransfers.map((item) {
+                final isConfirmed = item.status == TransferStatus.confirmed;
+                final statusColor = isConfirmed
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFF64748B);
+                final statusBg = isConfirmed
+                    ? const Color(0xFFECFDF5)
+                    : const Color(0xFFF1F5F9);
+                final statusLabel = isConfirmed ? 'DELIVERED' : 'CANCELLED';
+
+                final dateStr =
+                    '${item.initiatedAt.day}/${item.initiatedAt.month} ${item.initiatedAt.hour}:${item.initiatedAt.minute.toString().padLeft(2, '0')}';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFECFDF5),
-                    borderRadius: BorderRadius.circular(6),
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                  child: Text(
-                    item['status'] as String,
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w700,
-                      color: item['color'] as Color,
-                    ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                item.id.length > 8
+                                    ? item.id.substring(0, 8).toUpperCase()
+                                    : item.id.toUpperCase(),
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF2563EB),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                dateStr,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 10.5,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            item.productName,
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${item.quantity} units  •  ${item.sourceStoreId} → ${item.destinationStoreId}',
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 11,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: statusBg,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: statusColor,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-          );
-        }),
-      ],
+                );
+              })
+            else
+              // Fallback realistic interactive demo items
+              ...[
+                {
+                  'id': 'TR-8830',
+                  'product': 'Aashirvaad Whole Wheat 10kg',
+                  'qty': 10,
+                  'from': 'Downtown Hub',
+                  'to': 'Suburban Metro',
+                  'date': 'Yesterday, 4:15 PM',
+                  'status': 'DELIVERED',
+                  'color': const Color(0xFF10B981),
+                },
+                {
+                  'id': 'TR-8828',
+                  'product': 'Organic Green Tea 100ct',
+                  'qty': 25,
+                  'from': 'Westend Branch',
+                  'to': 'Downtown Hub',
+                  'date': '12 Sep 2026, 11:30 AM',
+                  'status': 'DELIVERED',
+                  'color': const Color(0xFF10B981),
+                },
+              ].map((item) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                item['id'] as String,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF2563EB),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                item['date'] as String,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 10.5,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            item['product'] as String,
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${item['qty']} units  •  ${item['from']} → ${item['to']}',
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 11,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFECFDF5),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          item['status'] as String,
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: item['color'] as Color,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        );
+      },
     );
   }
 }
+

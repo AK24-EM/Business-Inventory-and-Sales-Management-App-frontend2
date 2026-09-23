@@ -149,7 +149,7 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   }
 
   Widget _buildSegmentedTabs() {
-    final tabs = ['Overview', 'Restock', 'Festivals', 'Analytics', 'Approvals', 'Stock', 'Reports'];
+    final tabs = ['Overview', 'Products', 'Restock', 'Festivals', 'Analytics', 'Approvals', 'Stock', 'Reports'];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
@@ -165,6 +165,8 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                 setState(() => _activeTab = tab);
                 if (tab == 'Stock') {
                   context.go('/manager/inventory');
+                } else if (tab == 'Products') {
+                  context.go('/manager/products');
                 } else if (tab == 'Reports') {
                   context.go('/manager/reports');
                 } else if (tab == 'Approvals') {
@@ -401,6 +403,18 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                     ],
                   ),
                 ),
+              ),
+            ),
+            Expanded(
+              flex: 3,
+              child: _buildSmallActionTile(
+                title: 'Products',
+                subtitle: 'Manage & Add',
+                icon: Icons.inventory_rounded,
+                iconColor: const Color(0xFF7C3AED),
+                bgColor: const Color(0xFFF5F3FF),
+                borderColor: const Color(0xFFDDD6FE),
+                onTap: () => context.go('/manager/products'),
               ),
             ),
             const SizedBox(width: 10),

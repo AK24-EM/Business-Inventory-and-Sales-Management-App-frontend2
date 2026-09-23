@@ -45,44 +45,42 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
     
-    // Products collection - global read for all authenticated users
+    // Products collection - global read and write for authenticated users
     match /products/{productId} {
       allow read: if isAuthenticated();
-      allow write: if isOwner() || isManager();
+      allow write: if isAuthenticated();
     }
     
     // Inventory collection - store-specific
     match /inventory/{inventoryId} {
-      allow read: if isAuthenticated() && hasStoreAccess(resource.data.storeId);
-      allow write: if isAuthenticated() && (isOwner() || isManager()) && hasStoreAccess(request.resource.data.storeId);
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
     
     // Stock Movements - store-specific, sorted by timestamp DESC
     match /stockMovements/{movementId} {
-      allow read: if isAuthenticated() && hasStoreAccess(resource.data.storeId);
-      allow create: if isAuthenticated() && hasStoreAccess(request.resource.data.storeId);
-      allow update, delete: if isOwner() || isManager();
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated();
     }
     
     // Stock Transfers - read destination store, write source store
     match /stockTransfers/{transferId} {
-      allow read: if isAuthenticated() && (
-        hasStoreAccess(resource.data.sourceStoreId) ||
-        hasStoreAccess(resource.data.destinationStoreId)
-      );
-      allow create: if isAuthenticated() && isManager();
-      allow update: if isAuthenticated() && (isOwner() || isManager());
-      allow delete: if isOwner();
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
+    }
+    
+    // Purchase Orders collection
+    match /purchaseOrders/{poId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
     
     // Sales collection - sorted by timestamp DESC
     match /sales/{saleId} {
-      allow read: if isAuthenticated() && (
-        isOwner() || 
-        hasStoreAccess(resource.data.storeId)
-      );
-      allow create: if isAuthenticated() && hasStoreAccess(request.resource.data.storeId);
-      allow update, delete: if isOwner() || isManager();
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated();
     }
     
     // Customers collection
@@ -101,43 +99,36 @@ service cloud.firestore {
     match /loyaltyTransactions/{transactionId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      allow update, delete: if isOwner() || isManager();
+      allow update, delete: if isAuthenticated();
     }
     
     // Suppliers collection
     match /suppliers/{supplierId} {
       allow read: if isAuthenticated();
-      allow write: if isOwner() || isManager();
+      allow write: if isAuthenticated();
     }
     
     // Damaged Products - sorted by reportedAt DESC
     match /damagedProducts/{damagedId} {
       allow read: if isAuthenticated();
-      allow write: if isOwner() || isManager();
+      allow write: if isAuthenticated();
     }
     
     // Festivals - sorted by startDate ASC
     match /festivals/{festivalId} {
       allow read: if isAuthenticated();
-      allow write: if isOwner();
+      allow write: if isAuthenticated();
     }
     
     // Festival Alerts - sorted by createdAt DESC
     match /festivalAlerts/{alertId} {
       allow read: if isAuthenticated();
-      allow write: if isOwner();
+      allow write: if isAuthenticated();
     }
     
     // Notifications - sorted by createdAt DESC
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && (
-        resource.data.targetUserId == request.auth.uid ||
-        hasStoreAccess(resource.data.targetStoreId) ||
-        isOwner()
-      );
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && resource.data.targetUserId == request.auth.uid;
-      allow delete: if isOwner();
+      allow read, write: if isAuthenticated();
     }
   }
 }

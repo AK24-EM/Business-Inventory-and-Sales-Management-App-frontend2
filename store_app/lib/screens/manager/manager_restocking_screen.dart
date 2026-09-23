@@ -1,30 +1,33 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../config/app_theme.dart';
+import '../../config/app_constants.dart';
 import '../../widgets/store_header_widget.dart';
 import '../../providers/store_provider.dart';
 import '../../providers/product_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/analytics_service.dart';
+import '../../providers/inventory_provider.dart';
+import '../../providers/supplier_provider.dart';
+import '../../models/inventory_model.dart';
+import '../../models/supplier_model.dart';
+import '../../models/analytics_model.dart';
 import '../../services/sales_service.dart';
 import '../../services/inventory_service.dart';
 import '../../services/customer_service.dart';
 import '../../services/supplier_service.dart';
 import '../../services/notification_service.dart';
-import '../../models/supplier_model.dart';
-import '../../models/analytics_model.dart';
-import '../../models/user_model.dart';
 
-/// Manager-specific Smart Restocking Screen
+/// Manager-specific Smart Restocking Screen with Real-Time Firestore Sync
 /// Features:
+/// - Real-time stream updates whenever stock changes
+/// - Instant 1-click restock with visual feedback
+/// - Live stream of recent restock activity movements
+/// - Multi-view: Urgent Needs Restock vs All Products vs Live Feed
 /// - AI-powered restock recommendations based on sales velocity
-/// - Automatic reorder point calculations
 /// - One-click purchase order generation
-/// - Supplier lead time consideration
-/// - Safety stock buffer calculations
 class ManagerRestockingScreen extends StatefulWidget {
   const ManagerRestockingScreen({super.key});
 
@@ -32,89 +35,335 @@ class ManagerRestockingScreen extends StatefulWidget {
   State<ManagerRestockingScreen> createState() => _ManagerRestockingScreenState();
 }
 
-class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
-  List<RestockingRequirement> _requirements = [];
+class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
+    with SingleTickerProviderStateMixin {
+  // Real-time stream subscriptions
+  StreamSubscription<List<InventoryModel>>? _inventorySubscription;
+  String? _subscribedStoreId;
+  Timer? _loadingTimeoutTimer; // Safety timeout so spinner never freezes
+  int _initRetries = 0;
+
+  // Data state
+  List<RestockingRequirement> _allRequirements = [];
+  Map<String, int> _monthlySales = {};
   final Map<String, int> _quantities = {};
   final Map<String, bool> _selected = {};
+  final Set<String> _restockingItemKeys = {};
+
   bool _loading = true;
-  String _sortBy = 'urgency'; // urgency, alphabetical, category, cost
+  String _activeTab = 'needs_restock'; // 'needs_restock' | 'all_products' | 'activity'
+  String _sortBy = 'urgency'; // 'urgency' | 'alphabetical' | 'category' | 'cost'
+  String _searchQuery = '';
+  String _selectedCategory = 'All';
+
+  // Live pulse animation controller
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initRealtimeSync();
+    });
   }
 
-  Future<void> _loadData() async {
-    setState(() => _loading = true);
-    try {
-      final storeProvider = context.read<StoreProvider>();
-      final store = storeProvider.selectedStore;
-      if (store == null) {
-        if (mounted) setState(() => _loading = false);
+  @override
+  void dispose() {
+    _inventorySubscription?.cancel();
+    _loadingTimeoutTimer?.cancel();
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  List<InventoryModel>? _latestLiveInventory;
+
+  void _initRealtimeSync() {
+    if (!mounted) return;
+
+    final storeProvider = context.read<StoreProvider>();
+    final store = storeProvider.selectedStore;
+
+    // If StoreProvider is still loading, retry briefly (up to 10 times)
+    if (store == null) {
+      if (storeProvider.isLoading && _initRetries < 10) {
+        _initRetries++;
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _initRealtimeSync();
+        });
         return;
       }
+      // Store is null and not loading — give up, show empty state
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
 
-      await context.read<ProductProvider>().loadProducts();
+    if (_subscribedStoreId == store.id && _inventorySubscription != null) {
+      return; // Already listening to this store
+    }
 
-      final svc = AnalyticsService(
-        SalesService(InventoryService(), CustomerService()),
-        InventoryService(),
-        CustomerService(),
-      );
+    _subscribedStoreId = store.id;
 
-      final requirements = await svc.getRestockingRequirements([store.id]);
+    final productProvider = context.read<ProductProvider>();
+    final supplierProvider = context.read<SupplierProvider>();
+    final inventoryProvider = context.read<InventoryProvider>();
 
-      // Enrich with product details
-      final products = context.read<ProductProvider>();
-      for (int i = 0; i < requirements.length; i++) {
-        final req = requirements[i];
-        final product = products.getById(req.productId);
-        if (product != null) {
-          requirements[i] = RestockingRequirement(
-            productId: req.productId,
-            productName: req.productName,
-            category: req.category,
-            storeId: req.storeId,
-            storeName: store.name,
-            supplierId: req.supplierId,
-            supplierName: req.supplierName,
-            currentStock: req.currentStock,
-            minimumStockLevel: req.minimumStockLevel,
-            recommendedOrderQuantity: req.recommendedOrderQuantity,
-            purchasePrice: product.purchasePrice,
-            estimatedCost: product.purchasePrice * req.recommendedOrderQuantity,
-          );
-          final key = '${req.storeId}_${req.productId}';
-          _quantities[key] = req.recommendedOrderQuantity;
-          _selected[key] = true; // Select all by default
+    // --- SAFETY TIMEOUT: If stream hasn't fired in 2.5s, unlock UI ---
+    _loadingTimeoutTimer?.cancel();
+    _loadingTimeoutTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (mounted && _loading) {
+        debugPrint('Restock: stream timeout — unlocking UI with empty state');
+        setState(() => _loading = false);
+      }
+    });
+
+    // 1. If we already have cached inventory in provider, render instantly
+    if (inventoryProvider.inventory.isNotEmpty) {
+      _latestLiveInventory = inventoryProvider.inventory
+          .where((i) => i.storeId == store.id)
+          .toList();
+      if (_latestLiveInventory!.isNotEmpty) {
+        _processLiveInventory(_latestLiveInventory!);
+      }
+    }
+
+    // 2. Subscribe to real-time inventory stream
+    _inventorySubscription?.cancel();
+    _inventorySubscription = inventoryProvider.watchInventory(store.id).listen(
+      (liveInventory) {
+        _loadingTimeoutTimer?.cancel(); // Stream fired — no need for timeout
+        _latestLiveInventory = liveInventory;
+        _processLiveInventory(liveInventory);
+      },
+      onError: (err) {
+        debugPrint('Inventory stream error: $err');
+        if (mounted) setState(() => _loading = false);
+      },
+    );
+
+    // 3. Load products & suppliers in background if not already cached
+    if (productProvider.products.isEmpty) {
+      productProvider.loadProducts().then((_) {
+        if (mounted && _latestLiveInventory != null) {
+          _processLiveInventory(_latestLiveInventory!);
+        }
+      }).catchError((e) => debugPrint('Background product load: $e'));
+    }
+
+    if (supplierProvider.suppliers.isEmpty) {
+      supplierProvider.loadSuppliers().then((_) {
+        if (mounted && _latestLiveInventory != null) {
+          _processLiveInventory(_latestLiveInventory!);
+        }
+      }).catchError((e) => debugPrint('Background supplier load: $e'));
+    }
+
+    // 4. Fetch sales velocity in background — does NOT block UI render
+    _loadSalesVelocityInBackground(store.id);
+  }
+
+  void _loadSalesVelocityInBackground(String storeId) async {
+    try {
+      final salesService = SalesService(InventoryService(), CustomerService());
+      // Use Firestore-level date filter with a limit to avoid full collection scans
+      final sales = await salesService.getSalesByStoreRecent(storeId, limitDays: 30);
+
+      final Map<String, int> soldMap = {};
+      for (final sale in sales) {
+        for (final item in sale.items) {
+          soldMap[item.productId] = (soldMap[item.productId] ?? 0) + item.quantity;
         }
       }
-
       if (mounted) {
-        setState(() {
-          _requirements = requirements;
-          _loading = false;
-        });
+        _monthlySales = soldMap;
+        if (_latestLiveInventory != null) {
+          _processLiveInventory(_latestLiveInventory!);
+        }
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading restock data: $e')),
-        );
-      }
+      debugPrint('Background sales query error (non-blocking): $e');
+      // Non-fatal: restock screen still works without sales velocity data
     }
   }
 
-  List<RestockingRequirement> get _sortedRequirements {
-    final list = List<RestockingRequirement>.from(_requirements);
+  void _processLiveInventory(List<InventoryModel> liveInventory) {
+    if (!mounted) return;
+
+    final store = context.read<StoreProvider>().selectedStore;
+    if (store == null) return;
+
+    final productProvider = context.read<ProductProvider>();
+    final allProducts = productProvider.products;
+    final suppliers = context.read<SupplierProvider>().suppliers;
+    final supplierMap = {for (final s in suppliers) s.id: s.name};
+
+    final List<RestockingRequirement> reqList = [];
+
+    // If products are already in memory, enrich them;
+    // Otherwise render directly from liveInventory so UI appears in < 150ms!
+    if (allProducts.isNotEmpty) {
+      final invMap = {for (var inv in liveInventory) inv.productId: inv};
+
+      for (final product in allProducts) {
+        final inv = invMap[product.id];
+        final currentStock = inv?.currentStock ?? 0;
+        final minStock = inv?.minimumStockLevel ?? AppConstants.defaultMinStockLevel;
+        final monthly = _monthlySales[product.id] ?? 0;
+
+        int recommended = 20;
+        if (currentStock <= 0) {
+          recommended = minStock * 2;
+        } else if (currentStock <= minStock) {
+          final deficit = minStock - currentStock;
+          recommended = monthly > 0
+              ? (monthly * AppConstants.defaultRestockMultiplier).toInt()
+              : (deficit + minStock);
+        } else {
+          recommended = 20;
+        }
+        if (recommended < 10) recommended = 10;
+
+        String? resolvedSupplierId = product.supplierId;
+        if (resolvedSupplierId == null || resolvedSupplierId.isEmpty) {
+          for (final s in suppliers) {
+            if (s.productIds.contains(product.id)) {
+              resolvedSupplierId = s.id;
+              break;
+            }
+          }
+          resolvedSupplierId ??= (suppliers.isNotEmpty ? suppliers.first.id : 'sup_001');
+        }
+        final resolvedSupplierName = supplierMap[resolvedSupplierId] ?? 'Maharashtra FMCG Distributors';
+
+        final purchasePrice = product.purchasePrice > 0 ? product.purchasePrice : 45.0;
+
+        final req = RestockingRequirement(
+          productId: product.id,
+          productName: product.name,
+          category: product.category,
+          storeId: store.id,
+          storeName: store.name,
+          supplierId: resolvedSupplierId,
+          supplierName: resolvedSupplierName,
+          currentStock: currentStock,
+          minimumStockLevel: minStock,
+          recommendedOrderQuantity: recommended,
+          purchasePrice: purchasePrice,
+          estimatedCost: purchasePrice * recommended,
+        );
+
+        final key = '${store.id}_${product.id}';
+        if (!_quantities.containsKey(key)) {
+          _quantities[key] = req.recommendedOrderQuantity;
+        }
+        if (!_selected.containsKey(key)) {
+          _selected[key] = currentStock <= minStock;
+        }
+
+        reqList.add(req);
+      }
+    } else {
+      // Immediate render path: build requirements directly from live inventory
+      for (final inv in liveInventory) {
+        final currentStock = inv.currentStock;
+        final minStock = inv.minimumStockLevel > 0 ? inv.minimumStockLevel : AppConstants.defaultMinStockLevel;
+        final monthly = _monthlySales[inv.productId] ?? 0;
+
+        int recommended = currentStock <= 0
+            ? minStock * 2
+            : (monthly > 0
+                ? (monthly * AppConstants.defaultRestockMultiplier).toInt()
+                : (minStock * 2 - currentStock));
+        if (recommended < 10) recommended = 10;
+
+        String? resolvedSupplierId;
+        for (final s in suppliers) {
+          if (s.productIds.contains(inv.productId)) {
+            resolvedSupplierId = s.id;
+            break;
+          }
+        }
+        resolvedSupplierId ??= (suppliers.isNotEmpty ? suppliers.first.id : 'sup_001');
+        final resolvedSupplierName = supplierMap[resolvedSupplierId] ?? 'Maharashtra FMCG Distributors';
+
+        final req = RestockingRequirement(
+          productId: inv.productId,
+          productName: inv.productName,
+          category: inv.category,
+          storeId: store.id,
+          storeName: store.name,
+          supplierId: resolvedSupplierId,
+          supplierName: resolvedSupplierName,
+          currentStock: currentStock,
+          minimumStockLevel: minStock,
+          recommendedOrderQuantity: recommended,
+          purchasePrice: 45.0,
+          estimatedCost: 45.0 * recommended,
+        );
+
+        final key = '${store.id}_${inv.productId}';
+        if (!_quantities.containsKey(key)) {
+          _quantities[key] = req.recommendedOrderQuantity;
+        }
+        if (!_selected.containsKey(key)) {
+          _selected[key] = currentStock <= minStock;
+        }
+
+        reqList.add(req);
+      }
+    }
+
+    setState(() {
+      _allRequirements = reqList;
+      _loading = false;
+    });
+  }
+
+  // ── Filtered & Sorted Lists ────────────────────────────────────────────────
+  List<RestockingRequirement> get _needsRestockList {
+    return _allRequirements.where((r) => r.currentStock <= r.minimumStockLevel).toList();
+  }
+
+  List<RestockingRequirement> get _currentDisplayList {
+    List<RestockingRequirement> list;
+    if (_activeTab == 'needs_restock') {
+      list = List.from(_needsRestockList);
+    } else {
+      list = List.from(_allRequirements);
+    }
+
+    // Category filter
+    if (_selectedCategory != 'All') {
+      list = list.where((r) => r.category == _selectedCategory).toList();
+    }
+
+    // Search filter
+    if (_searchQuery.trim().isNotEmpty) {
+      final q = _searchQuery.toLowerCase().trim();
+      list = list.where((r) =>
+          r.productName.toLowerCase().contains(q) ||
+          r.category.toLowerCase().contains(q)).toList();
+    }
+
+    // Sort
     switch (_sortBy) {
       case 'urgency':
         list.sort((a, b) {
-          final aUrgency = a.minimumStockLevel - a.currentStock;
-          final bUrgency = b.minimumStockLevel - b.currentStock;
-          return bUrgency.compareTo(aUrgency);
+          // 1. Out of stock (0 units) always ranked first
+          if (a.currentStock == 0 && b.currentStock > 0) return -1;
+          if (b.currentStock == 0 && a.currentStock > 0) return 1;
+          // 2. Highest deficit below minimum safety stock
+          final aDeficit = a.minimumStockLevel - a.currentStock;
+          final bDeficit = b.minimumStockLevel - b.currentStock;
+          return bDeficit.compareTo(aDeficit);
         });
         break;
       case 'alphabetical':
@@ -125,8 +374,10 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
         break;
       case 'cost':
         list.sort((a, b) {
-          final aCost = a.purchasePrice * _quantities['${a.storeId}_${a.productId}']!;
-          final bCost = b.purchasePrice * _quantities['${b.storeId}_${b.productId}']!;
+          final aQty = _quantities['${a.storeId}_${a.productId}'] ?? a.recommendedOrderQuantity;
+          final bQty = _quantities['${b.storeId}_${b.productId}'] ?? b.recommendedOrderQuantity;
+          final aCost = a.purchasePrice * aQty;
+          final bCost = b.purchasePrice * bQty;
           return bCost.compareTo(aCost);
         });
         break;
@@ -135,7 +386,8 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
   }
 
   double get _totalSelectedCost {
-    return _requirements.fold(0.0, (sum, req) {
+    final list = _activeTab == 'needs_restock' ? _needsRestockList : _allRequirements;
+    return list.fold(0.0, (sum, req) {
       final key = '${req.storeId}_${req.productId}';
       if (_selected[key] == true) {
         final qty = _quantities[key] ?? req.recommendedOrderQuantity;
@@ -146,136 +398,275 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
   }
 
   int get _selectedCount {
-    return _selected.values.where((v) => v == true).length;
+    final list = _activeTab == 'needs_restock' ? _needsRestockList : _allRequirements;
+    return list.where((r) => _selected['${r.storeId}_${r.productId}'] == true).length;
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+  Future<void> _quickRestockItem(RestockingRequirement req, int qty) async {
+    final itemKey = '${req.storeId}_${req.productId}';
+    if (_restockingItemKeys.contains(itemKey)) return;
+
+    setState(() => _restockingItemKeys.add(itemKey));
+
+    try {
+      final auth = context.read<AuthProvider>();
+      final user = auth.currentUser;
+
+      await context.read<InventoryProvider>().quickRestock(
+            storeId: req.storeId,
+            productId: req.productId,
+            productName: req.productName,
+            quantity: qty,
+            userId: user?.id ?? 'manager',
+            userName: user?.name ?? 'Store Manager',
+            notes: '⚡ Real-time Quick Restock (+ $qty units)',
+          );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '✓ Restocked +$qty units of ${req.productName}! (Stock: ${req.currentStock + qty})',
+                    style: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFF059669),
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to restock: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _restockingItemKeys.remove(itemKey));
+      }
+    }
   }
 
   Future<void> _generatePurchaseOrders() async {
-    if (_selectedCount == 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select at least one item')),
-        );
-      }
-      return;
-    }
+    final targetList = _activeTab == 'needs_restock' ? _needsRestockList : _allRequirements;
+    final selectedReqs = targetList
+        .where((r) => _selected['${r.storeId}_${r.productId}'] == true)
+        .toList();
 
-    // Group selected items by supplier
-    final Map<String, List<RestockingRequirement>> bySupplier = {};
-    for (final req in _requirements) {
-      final key = '${req.storeId}_${req.productId}';
-      if (_selected[key] == true && req.supplierId != null && req.supplierId!.isNotEmpty) {
-        bySupplier.putIfAbsent(req.supplierId!, () => []).add(req);
-      }
-    }
-
-    if (bySupplier.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Selected items have no supplier assigned. Please assign suppliers first.')),
-        );
-      }
+    if (selectedReqs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select at least one item to order'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
       return;
     }
 
     try {
       final supplierService = SupplierService();
-      final authProvider = context.read<AuthProvider>();
-      final currentUser = authProvider.currentUser;
-      
-      if (currentUser == null) {
-        throw Exception('User not authenticated. Please log in again.');
+      final supplierProvider = context.read<SupplierProvider>();
+      final suppliers = supplierProvider.suppliers;
+      final supplierMap = {for (final s in suppliers) s.id: s.name};
+      final currentUser = context.read<AuthProvider>().currentUser;
+      final store = context.read<StoreProvider>().selectedStore;
+
+      if (store == null) {
+        throw Exception('No store selected.');
       }
 
-      final store = context.read<StoreProvider>().selectedStore;
-      if (store == null) {
-        throw Exception('No store selected. Please select a store.');
+      // Group selected items by supplier
+      final Map<String, List<RestockingRequirement>> bySupplier = {};
+      for (final req in selectedReqs) {
+        String supId = req.supplierId ?? '';
+        if (supId.isEmpty) {
+          for (final s in suppliers) {
+            if (s.productIds.contains(req.productId)) {
+              supId = s.id;
+              break;
+            }
+          }
+          supId = supId.isNotEmpty ? supId : (suppliers.isNotEmpty ? suppliers.first.id : 'sup_001');
+        }
+        bySupplier.putIfAbsent(supId, () => []).add(req);
       }
 
       int poCount = 0;
+      final List<PurchaseOrder> createdOrders = [];
 
       for (final entry in bySupplier.entries) {
-        try {
-          final items = entry.value.map((req) {
-            final key = '${req.storeId}_${req.productId}';
-            final qty = _quantities[key] ?? req.recommendedOrderQuantity;
-            return PurchaseOrderItem(
-              productId: req.productId,
-              productName: req.productName,
-              orderedQuantity: qty,
-              unitPrice: req.purchasePrice,
-              totalPrice: req.purchasePrice * qty,
-            );
-          }).toList();
+        final supplierId = entry.key;
+        final supplierName = supplierMap[supplierId] ?? 'Supplier ($supplierId)';
 
-          final total = items.fold(0.0, (s, i) => s + i.totalPrice);
-          final supplierName = entry.value.first.supplierName ?? entry.key;
+        final items = entry.value.map((req) {
+          final key = '${req.storeId}_${req.productId}';
+          final qty = _quantities[key] ?? req.recommendedOrderQuantity;
+          return PurchaseOrderItem(
+            productId: req.productId,
+            productName: req.productName,
+            orderedQuantity: qty,
+            unitPrice: req.purchasePrice,
+            totalPrice: req.purchasePrice * qty,
+          );
+        }).toList();
 
-          await supplierService.createPurchaseOrder(PurchaseOrder(
-            id: '',
-            supplierId: entry.key,
-            supplierName: supplierName,
-            items: items,
-            totalAmount: total,
-            createdByUserId: currentUser.id,
-            createdByUserName: currentUser.name,
-            createdAt: DateTime.now(),
-            targetStoreId: store.id,
-          ));
-          poCount++;
-        } catch (e) {
-          print('Error creating PO for supplier ${entry.key}: $e');
-          // Continue with other suppliers
-        }
+        final total = items.fold(0.0, (s, i) => s + i.totalPrice);
+
+        final po = await supplierService.createPurchaseOrder(PurchaseOrder(
+          id: '',
+          supplierId: supplierId,
+          supplierName: supplierName,
+          items: items,
+          totalAmount: total,
+          status: PurchaseOrderStatus.sent,
+          createdByUserId: currentUser?.id ?? 'manager',
+          createdByUserName: currentUser?.name ?? 'Store Manager',
+          createdAt: DateTime.now(),
+          targetStoreId: store.id,
+        ));
+        createdOrders.add(po);
+        poCount++;
       }
 
-      if (poCount == 0) {
-        throw Exception('Failed to create any purchase orders');
-      }
-
-      // Send notification about PO creation
       try {
         final notificationService = NotificationService();
         await notificationService.sendCustomNotification(
           title: '✓ Purchase Orders Created',
           message: '$poCount PO(s) created for restocking at ${store.name}',
-          userId: currentUser.id,
+          userId: currentUser?.id ?? 'manager',
           storeId: store.id,
           sendPush: false,
         );
-      } catch (e) {
-        print('Error sending notification: $e');
-        // Don't fail the whole operation just for notification
-      }
+      } catch (_) {}
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✓ $poCount purchase order(s) created successfully'),
-            backgroundColor: AppColors.success,
-            duration: const Duration(seconds: 3),
+        final fmt = NumberFormat('#,##,##0.00', 'en_IN');
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 28),
+                SizedBox(width: 10),
+                Text(
+                  'Purchase Orders Created!',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Successfully generated $poCount purchase order(s) for ${store.name}:',
+                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 12.5),
+                ),
+                const SizedBox(height: 12),
+                ...createdOrders.map(
+                  (po) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF059669)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  po.supplierName,
+                                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w700),
+                                ),
+                                Text(
+                                  '${po.items.length} product(s) ordered',
+                                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 10.5, color: Color(0xFF64748B)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            '₹${fmt.format(po.totalAmount)}',
+                            style: const TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF059669)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Done', style: TextStyle(fontFamily: 'Poppins', color: Color(0xFF64748B))),
+              ),
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  context.push('/manager/purchase-orders');
+                },
+                icon: const Icon(Icons.receipt_long_rounded, size: 16),
+                label: const Text('View Orders'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF059669),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
           ),
         );
-        // Refresh data after a short delay
-        await Future.delayed(const Duration(milliseconds: 500));
-        await _loadData();
       }
     } catch (e) {
-      print('Error in _generatePurchaseOrders: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: AppColors.error,
-            duration: const Duration(seconds: 5),
+            content: Text('Error generating POs: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+            behavior: SnackBarBehavior.floating,
           ),
         );
       }
     }
   }
 
+  // ── Build UI ───────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final fmt = NumberFormat('#,##,##0.00', 'en_IN');
+    final store = context.watch<StoreProvider>().selectedStore;
+
+    // Detect if store switched
+    if (store != null && store.id != _subscribedStoreId) {
+      _subscribedStoreId = store.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _initRealtimeSync();
+      });
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -283,30 +674,38 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Header
+            // Store Header
             StoreHeaderWidget(
               title: 'Smart Restocking',
-              subtitle: 'AI-POWERED REPLENISHMENT • Sales Velocity Analysis',
+              subtitle: 'AI REPLENISHMENT • Real-Time Firestore Sync',
               onNotificationTap: () => context.go('/manager/notifications'),
             ),
 
-            // Hero Banner
+            // Hero Live Banner
             _buildHeroBanner(fmt),
 
-            // Sort & Filter Bar
-            _buildSortBar(),
+            // Navigation Tabs (Needs Restock | All Products | Live Activity)
+            _buildTabBar(),
 
-            // List
+            // Filters & Search Bar (only for list views)
+            if (_activeTab != 'activity') _buildFilterBar(),
+
+            // Content Area
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF059669)))
-                  : _requirements.isEmpty
-                      ? _buildEmptyState()
-                      : _buildRestockList(),
+                  ? const Center(
+                      child: CircularProgressIndicator(color: Color(0xFF059669)),
+                    )
+                  : _activeTab == 'activity'
+                      ? _buildLiveActivityView(store?.id ?? '')
+                      : _currentDisplayList.isEmpty
+                          ? _buildEmptyState()
+                          : _buildRestockList(),
             ),
 
-            // Bottom Action Bar
-            if (_requirements.isNotEmpty) _buildBottomBar(fmt),
+            // Bottom Floating Bar for Purchase Orders
+            if (_activeTab != 'activity' && _currentDisplayList.isNotEmpty)
+              _buildBottomBar(fmt),
           ],
         ),
       ),
@@ -315,20 +714,20 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
 
   Widget _buildHeroBanner(NumberFormat fmt) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      padding: const EdgeInsets.all(18),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF065F46), Color(0xFF059669), Color(0xFF10B981)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF059669).withValues(alpha: 0.32),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
+            color: const Color(0xFF059669).withValues(alpha: 0.28),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
           ),
         ],
       ),
@@ -338,82 +737,110 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(9),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.22),
-                  borderRadius: BorderRadius.circular(11),
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.autorenew_rounded, color: Colors.white, size: 22),
+                child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
               ),
-              const SizedBox(width: 12),
-              const Expanded(
+              const SizedBox(width: 10),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Intelligent Reorder System',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: -0.3,
-                      ),
+                    Row(
+                      children: [
+                        const Text(
+                          'Live Restock Hub',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Live Pulse Dot
+                        ScaleTransition(
+                          scale: _pulseAnimation,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF34D399),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.circle, color: Color(0xFF064E3B), size: 6),
+                                SizedBox(width: 4),
+                                Text(
+                                  'LIVE SYNC',
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF064E3B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(
-                      'AI calculates optimal order quantities',
+                    const Text(
+                      'Changes reflect instantly across all cashiers and stores',
                       style: TextStyle(
                         fontFamily: 'Poppins',
-                        fontSize: 11,
+                        fontSize: 10.5,
                         color: Colors.white70,
                       ),
                     ),
                   ],
                 ),
               ),
-              InkWell(
-                onTap: _loadData,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.refresh_rounded, color: Colors.white, size: 18),
+              IconButton(
+                onPressed: _initRealtimeSync,
+                tooltip: 'Re-sync Stream',
+                icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.18),
+                  padding: const EdgeInsets.all(6),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.22),
-              borderRadius: BorderRadius.circular(13),
+              color: Colors.black.withValues(alpha: 0.20),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _bannerStat(
-                  '${_requirements.length}',
-                  'Products Need Restock',
-                  Icons.inventory_2_outlined,
+                  '${_needsRestockList.length}',
+                  'Needs Restock',
+                  Icons.warning_amber_rounded,
                   const Color(0xFFFDE68A),
                 ),
-                Container(width: 1, height: 36, color: Colors.white24),
+                Container(width: 1, height: 30, color: Colors.white24),
+                _bannerStat(
+                  '${_allRequirements.length}',
+                  'Total Products',
+                  Icons.inventory_2_outlined,
+                  const Color(0xFF93C5FD),
+                ),
+                Container(width: 1, height: 30, color: Colors.white24),
                 _bannerStat(
                   '₹${fmt.format(_totalSelectedCost)}',
-                  'Estimated Investment',
+                  'Selected Cost',
                   Icons.currency_rupee_rounded,
                   const Color(0xFF6EE7B7),
-                ),
-                Container(width: 1, height: 36, color: Colors.white24),
-                _bannerStat(
-                  '$_selectedCount',
-                  'Items Selected',
-                  Icons.check_circle_outline_rounded,
-                  const Color(0xFF93C5FD),
                 ),
               ],
             ),
@@ -426,91 +853,81 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
   Widget _bannerStat(String value, String label, IconData icon, Color color) {
     return Column(
       children: [
-        Icon(icon, size: 15, color: color),
-        const SizedBox(height: 5),
-        Text(
-          value,
-          style: const TextStyle(
-            fontFamily: 'Poppins',
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+          ],
         ),
         Text(
           label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontFamily: 'Poppins',
-            fontSize: 9,
-            color: Colors.white.withValues(alpha: 0.8),
-            height: 1.2,
+            fontSize: 9.5,
+            color: Colors.white70,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildSortBar() {
+  Widget _buildTabBar() {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE2E8F0),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         children: [
-          const Icon(Icons.sort_rounded, size: 18, color: Color(0xFF64748B)),
-          const SizedBox(width: 8),
-          const Text(
-            'Sort by:',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 12,
-              color: Color(0xFF64748B),
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _sortChip('Urgency', 'urgency'),
-                  _sortChip('Name A-Z', 'alphabetical'),
-                  _sortChip('Category', 'category'),
-                  _sortChip('Cost', 'cost'),
-                ],
-              ),
-            ),
-          ),
+          _tabButton('🚨 Needs Restock (${_needsRestockList.length})', 'needs_restock'),
+          _tabButton('📦 All Products (${_allRequirements.length})', 'all_products'),
+          _tabButton('⚡ Live Activity', 'activity'),
         ],
       ),
     );
   }
 
-  Widget _sortChip(String label, String value) {
-    final isSelected = _sortBy == value;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
-        onTap: () => setState(() => _sortBy = value),
-        borderRadius: BorderRadius.circular(18),
+  Widget _tabButton(String label, String tabKey) {
+    final isSelected = _activeTab == tabKey;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _activeTab = tabKey),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF059669) : const Color(0xFFF1F5F9),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: isSelected ? const Color(0xFF059669) : const Color(0xFFE2E8F0),
-            ),
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : [],
           ),
           child: Text(
             label,
             style: TextStyle(
               fontFamily: 'Poppins',
               fontSize: 11,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-              color: isSelected ? Colors.white : const Color(0xFF64748B),
+              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+              color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
             ),
           ),
         ),
@@ -518,64 +935,111 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
     );
   }
 
-  Widget _buildRestockList() {
-    final sorted = _sortedRequirements;
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: sorted.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (_, i) => _RestockCard(
-        requirement: sorted[i],
-        quantity: _quantities['${sorted[i].storeId}_${sorted[i].productId}'] ?? sorted[i].recommendedOrderQuantity,
-        isSelected: _selected['${sorted[i].storeId}_${sorted[i].productId}'] ?? false,
-        onSelectionChanged: (val) {
-          setState(() {
-            _selected['${sorted[i].storeId}_${sorted[i].productId}'] = val;
-          });
-        },
-        onQuantityChanged: (qty) {
-          setState(() {
-            _quantities['${sorted[i].storeId}_${sorted[i].productId}'] = qty;
-          });
-        },
-      ),
-    );
-  }
+  Widget _buildFilterBar() {
+    final categories = ['All', ...{for (var r in _allRequirements) r.category}];
 
-  Widget _buildEmptyState() {
-    return Center(
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: const BoxDecoration(
-              color: Color(0xFFECFDF5),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.check_circle_outline_rounded,
-              size: 60,
-              color: Color(0xFF059669),
-            ),
+          // Search & Sort Row
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    onChanged: (val) => setState(() => _searchQuery = val),
+                    decoration: InputDecoration(
+                      hintText: 'Search products...',
+                      hintStyle: const TextStyle(fontFamily: 'Poppins', fontSize: 12),
+                      prefixIcon: const Icon(Icons.search, size: 18, color: Color(0xFF64748B)),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Sort dropdown
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _sortBy,
+                    icon: const Icon(Icons.swap_vert_rounded, size: 18, color: Color(0xFF059669)),
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1E293B),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'urgency', child: Text('Urgency')),
+                      DropdownMenuItem(value: 'alphabetical', child: Text('Name A-Z')),
+                      DropdownMenuItem(value: 'category', child: Text('Category')),
+                      DropdownMenuItem(value: 'cost', child: Text('Est. Cost')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) setState(() => _sortBy = val);
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'All Stock Levels Optimal!',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF0F172A),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'No items need restocking at this time',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 13,
-              color: Color(0xFF64748B),
+          const SizedBox(height: 8),
+          // Category chips
+          SizedBox(
+            height: 28,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: categories.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (_, i) {
+                final cat = categories[i];
+                final isSelected = _selectedCategory == cat;
+                return ChoiceChip(
+                  label: Text(
+                    cat,
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 10.5,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      color: isSelected ? Colors.white : const Color(0xFF475569),
+                    ),
+                  ),
+                  selected: isSelected,
+                  selectedColor: const Color(0xFF059669),
+                  backgroundColor: Colors.white,
+                  showCheckmark: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+                  onSelected: (val) {
+                    if (val) setState(() => _selectedCategory = cat);
+                  },
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: BorderSide(
+                      color: isSelected ? const Color(0xFF059669) : const Color(0xFFE2E8F0),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -583,16 +1047,257 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
     );
   }
 
+  Widget _buildRestockList() {
+    final list = _currentDisplayList;
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+      itemCount: list.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (_, i) {
+        final req = list[i];
+        final key = '${req.storeId}_${req.productId}';
+        final qty = _quantities[key] ?? req.recommendedOrderQuantity;
+        final isSelected = _selected[key] ?? false;
+        final isRestocking = _restockingItemKeys.contains(key);
+
+        return _RestockCard(
+          requirement: req,
+          quantity: qty,
+          isSelected: isSelected,
+          isRestocking: isRestocking,
+          onSelectionChanged: (val) {
+            setState(() => _selected[key] = val);
+          },
+          onQuantityChanged: (newQty) {
+            setState(() => _quantities[key] = newQty);
+          },
+          onQuickRestock: () => _quickRestockItem(req, qty),
+        );
+      },
+    );
+  }
+
+  Widget _buildLiveActivityView(String storeId) {
+    if (storeId.isEmpty) {
+      return const Center(child: Text('No store selected'));
+    }
+
+    final inventoryProvider = context.read<InventoryProvider>();
+    return StreamBuilder<List<StockMovement>>(
+      stream: inventoryProvider.watchMovements(storeId, ''),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF059669)),
+          );
+        }
+
+        final movements = snapshot.data ?? [];
+        final restocks = movements.where((m) => m.type == StockMovementType.receipt).toList();
+
+        if (restocks.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF1F5F9),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.history_rounded, size: 48, color: Color(0xFF94A3B8)),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'No restock movements recorded yet',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF475569),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'When products are restocked, live receipt events will appear here.',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: Color(0xFF94A3B8)),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        }
+
+        final df = DateFormat('dd MMM yyyy • hh:mm a');
+
+        return ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: restocks.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (_, i) {
+            final m = restocks[i];
+            return Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFECFDF5),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.call_received_rounded, color: Color(0xFF059669), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          m.productName,
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${m.reason ?? "Quick Restock"} • by ${m.userName}',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 10.5,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                        Text(
+                          df.format(m.timestamp),
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 9.5,
+                            color: Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF059669),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '+${m.quantity} Units',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Stock: ${m.stockBefore} → ${m.stockAfter}',
+                        style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF475569),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: const BoxDecoration(
+                color: Color(0xFFECFDF5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.check_circle_outline_rounded,
+                size: 56,
+                color: Color(0xFF059669),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'All Inventory Levels are Healthy!',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'No items currently below minimum safety stock levels.\nYou can still pre-restock any catalog item.',
+              style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, color: Color(0xFF64748B)),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 18),
+            ElevatedButton.icon(
+              onPressed: () => setState(() => _activeTab = 'all_products'),
+              icon: const Icon(Icons.inventory_2_outlined, size: 16),
+              label: const Text('Browse All Products to Refill'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF059669),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomBar(NumberFormat fmt) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF0F172A).withValues(alpha: 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, -4),
+            blurRadius: 10,
+            offset: const Offset(0, -3),
           ),
         ],
       ),
@@ -609,7 +1314,7 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
                     '$_selectedCount items selected',
                     style: const TextStyle(
                       fontFamily: 'Poppins',
-                      fontSize: 12,
+                      fontSize: 11,
                       color: Color(0xFF64748B),
                     ),
                   ),
@@ -617,7 +1322,7 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
                     '₹${fmt.format(_totalSelectedCost)}',
                     style: const TextStyle(
                       fontFamily: 'Poppins',
-                      fontSize: 20,
+                      fontSize: 18,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF0F172A),
                     ),
@@ -627,19 +1332,19 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
             ),
             ElevatedButton.icon(
               onPressed: _selectedCount > 0 ? _generatePurchaseOrders : null,
-              icon: const Icon(Icons.add_task_rounded, size: 18),
+              icon: const Icon(Icons.add_task_rounded, size: 17),
               label: const Text('Create Purchase Orders'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF059669),
                 foregroundColor: Colors.white,
                 elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 textStyle: const TextStyle(
                   fontFamily: 'Poppins',
-                  fontSize: 13,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -651,62 +1356,89 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen> {
   }
 }
 
+// ── Item Restock Card ────────────────────────────────────────────────────────
 class _RestockCard extends StatelessWidget {
   final RestockingRequirement requirement;
   final int quantity;
   final bool isSelected;
+  final bool isRestocking;
   final ValueChanged<bool> onSelectionChanged;
   final ValueChanged<int> onQuantityChanged;
+  final VoidCallback onQuickRestock;
 
   const _RestockCard({
     required this.requirement,
     required this.quantity,
     required this.isSelected,
+    required this.isRestocking,
     required this.onSelectionChanged,
     required this.onQuantityChanged,
+    required this.onQuickRestock,
   });
 
   @override
   Widget build(BuildContext context) {
     final fmt = NumberFormat('#,##,##0.00', 'en_IN');
-    final urgencyLevel = _getUrgencyLevel();
-    final urgencyColor = _getUrgencyColor();
-    final urgencyBg = _getUrgencyBg();
+    final isOutOfStock = requirement.currentStock <= 0;
+    final isLow = requirement.currentStock <= requirement.minimumStockLevel;
+
+    final urgencyColor = isOutOfStock
+        ? const Color(0xFFDC2626)
+        : isLow
+            ? const Color(0xFFD97706)
+            : const Color(0xFF059669);
+
+    final urgencyBg = isOutOfStock
+        ? const Color(0xFFFEF2F2)
+        : isLow
+            ? const Color(0xFFFFFBEB)
+            : const Color(0xFFECFDF5);
+
+    final urgencyLabel = isOutOfStock
+        ? 'OUT OF STOCK'
+        : isLow
+            ? 'LOW STOCK'
+            : 'HEALTHY';
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: isSelected ? const Color(0xFF059669) : const Color(0xFFE2E8F0),
           width: isSelected ? 2 : 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with checkbox
+          // Header Row
           Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: isSelected ? const Color(0xFFECFDF5) : Colors.transparent,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
             ),
             child: Row(
               children: [
-                Checkbox(
-                  value: isSelected,
-                  onChanged: (val) => onSelectionChanged(val ?? false),
-                  activeColor: const Color(0xFF059669),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: Checkbox(
+                    value: isSelected,
+                    onChanged: (val) => onSelectionChanged(val ?? false),
+                    activeColor: const Color(0xFF059669),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  ),
                 ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -715,17 +1447,16 @@ class _RestockCard extends StatelessWidget {
                         requirement.productName,
                         style: const TextStyle(
                           fontFamily: 'Poppins',
-                          fontSize: 14,
+                          fontSize: 13.5,
                           fontWeight: FontWeight.w700,
                           color: Color(0xFF0F172A),
                         ),
                       ),
-                      const SizedBox(height: 2),
                       Text(
                         requirement.category,
                         style: const TextStyle(
                           fontFamily: 'Poppins',
-                          fontSize: 11,
+                          fontSize: 10.5,
                           color: Color(0xFF64748B),
                         ),
                       ),
@@ -733,22 +1464,30 @@ class _RestockCard extends StatelessWidget {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: urgencyBg,
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.priority_high_rounded, size: 12, color: urgencyColor),
+                      Icon(
+                        isOutOfStock
+                            ? Icons.error_outline_rounded
+                            : isLow
+                                ? Icons.warning_amber_rounded
+                                : Icons.check_circle_outline_rounded,
+                        size: 11,
+                        color: urgencyColor,
+                      ),
                       const SizedBox(width: 4),
                       Text(
-                        urgencyLevel,
+                        urgencyLabel,
                         style: TextStyle(
                           fontFamily: 'Poppins',
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
                           color: urgencyColor,
                         ),
                       ),
@@ -758,58 +1497,83 @@ class _RestockCard extends StatelessWidget {
               ],
             ),
           ),
+          const Divider(height: 1, color: Color(0xFFF1F5F9)),
 
-          const Divider(height: 1),
-
-          // Stock Status
+          // Body
           Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Real-Time Stock Status Badges
                 Row(
                   children: [
                     _InfoBadge(
                       icon: Icons.inventory_2_outlined,
-                      label: 'Current',
+                      label: 'Current Live',
                       value: '${requirement.currentStock}',
-                      color: const Color(0xFFEF4444),
+                      color: isOutOfStock
+                          ? const Color(0xFFDC2626)
+                          : isLow
+                              ? const Color(0xFFD97706)
+                              : const Color(0xFF059669),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     _InfoBadge(
                       icon: Icons.flag_outlined,
-                      label: 'Minimum',
+                      label: 'Min Safety',
                       value: '${requirement.minimumStockLevel}',
-                      color: const Color(0xFFF59E0B),
+                      color: const Color(0xFF64748B),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     _InfoBadge(
                       icon: Icons.recommend_outlined,
                       label: 'Suggested',
                       value: '${requirement.recommendedOrderQuantity}',
-                      color: const Color(0xFF059669),
+                      color: const Color(0xFF2563EB),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
-                // Quantity Selector
+                // Quick Increment Presets
+                Row(
+                  children: [
+                    const Text(
+                      'Quick Add:',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    _presetChip('+10', () => onQuantityChanged(quantity + 10)),
+                    _presetChip('+25', () => onQuantityChanged(quantity + 25)),
+                    _presetChip('+50', () => onQuantityChanged(quantity + 50)),
+                    _presetChip('+100', () => onQuantityChanged(quantity + 100)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                // Stepper Row
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: const Color(0xFFE2E8F0)),
                   ),
                   child: Row(
                     children: [
                       const Text(
-                        'Order Quantity:',
+                        'Restock Quantity:',
                         style: TextStyle(
                           fontFamily: 'Poppins',
-                          fontSize: 12,
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF475569),
+                          color: Color(0xFF334155),
                         ),
                       ),
                       const Spacer(),
@@ -817,18 +1581,18 @@ class _RestockCard extends StatelessWidget {
                         onPressed: quantity > 1 ? () => onQuantityChanged(quantity - 1) : null,
                         icon: const Icon(Icons.remove_circle_outline_rounded),
                         color: const Color(0xFF059669),
-                        iconSize: 22,
+                        iconSize: 20,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                       ),
-                      Container(
-                        width: 60,
-                        alignment: Alignment.center,
+                      SizedBox(
+                        width: 50,
                         child: Text(
                           '$quantity',
+                          textAlign: TextAlign.center,
                           style: const TextStyle(
                             fontFamily: 'Poppins',
-                            fontSize: 18,
+                            fontSize: 16,
                             fontWeight: FontWeight.w700,
                             color: Color(0xFF0F172A),
                           ),
@@ -838,16 +1602,16 @@ class _RestockCard extends StatelessWidget {
                         onPressed: () => onQuantityChanged(quantity + 1),
                         icon: const Icon(Icons.add_circle_outline_rounded),
                         color: const Color(0xFF059669),
-                        iconSize: 22,
+                        iconSize: 20,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
-                // Cost Calculation
+                // Cost & Total Row
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -855,7 +1619,7 @@ class _RestockCard extends StatelessWidget {
                       '₹${fmt.format(requirement.purchasePrice)} × $quantity units',
                       style: const TextStyle(
                         fontFamily: 'Poppins',
-                        fontSize: 12,
+                        fontSize: 11,
                         color: Color(0xFF64748B),
                       ),
                     ),
@@ -863,46 +1627,78 @@ class _RestockCard extends StatelessWidget {
                       '₹${fmt.format(requirement.purchasePrice * quantity)}',
                       style: const TextStyle(
                         fontFamily: 'Poppins',
-                        fontSize: 16,
+                        fontSize: 14.5,
                         fontWeight: FontWeight.w700,
                         color: Color(0xFF059669),
                       ),
                     ),
                   ],
                 ),
-
-                // Supplier Info
-                if (requirement.supplierName != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFFBEB),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFFDE68A)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.local_shipping_outlined,
-                          size: 14,
-                          color: Color(0xFFD97706),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Supplier: ${requirement.supplierName}',
-                            style: const TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 11,
-                              color: Color(0xFF92400E),
-                            ),
+                // Supplier Info Badge
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.local_shipping_outlined, size: 14, color: Color(0xFFD97706)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Supplier: ${requirement.supplierName ?? "Maharashtra FMCG"}',
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF92400E),
                           ),
                         ),
-                      ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ⚡ Instant Restock Action Button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: isRestocking ? null : onQuickRestock,
+                    icon: isRestocking
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.bolt_rounded, size: 16),
+                    label: Text(
+                      isRestocking
+                          ? 'Updating Live Firestore...'
+                          : '⚡ Instant Restock (+ $quantity Units)',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF059669),
+                      disabledBackgroundColor: const Color(0xFF059669).withValues(alpha: 0.6),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      textStyle: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                ],
+                ),
               ],
             ),
           ),
@@ -911,28 +1707,31 @@ class _RestockCard extends StatelessWidget {
     );
   }
 
-  String _getUrgencyLevel() {
-    final deficit = requirement.minimumStockLevel - requirement.currentStock;
-    if (deficit >= 20) return 'CRITICAL';
-    if (deficit >= 10) return 'HIGH';
-    if (deficit >= 5) return 'MEDIUM';
-    return 'LOW';
-  }
-
-  Color _getUrgencyColor() {
-    final deficit = requirement.minimumStockLevel - requirement.currentStock;
-    if (deficit >= 20) return const Color(0xFFDC2626);
-    if (deficit >= 10) return const Color(0xFFEA580C);
-    if (deficit >= 5) return const Color(0xFFF59E0B);
-    return const Color(0xFF64748B);
-  }
-
-  Color _getUrgencyBg() {
-    final deficit = requirement.minimumStockLevel - requirement.currentStock;
-    if (deficit >= 20) return const Color(0xFFFEF2F2);
-    if (deficit >= 10) return const Color(0xFFFFF7ED);
-    if (deficit >= 5) return const Color(0xFFFFFBEB);
-    return const Color(0xFFF1F5F9);
+  Widget _presetChip(String label, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFFCBD5E1)),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -953,21 +1752,21 @@ class _InfoBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
+          border: Border.all(color: color.withValues(alpha: 0.18)),
         ),
         child: Column(
           children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(height: 4),
+            Icon(icon, size: 13, color: color),
+            const SizedBox(height: 2),
             Text(
               value,
               style: TextStyle(
                 fontFamily: 'Poppins',
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: color,
               ),
@@ -976,8 +1775,8 @@ class _InfoBadge extends StatelessWidget {
               label,
               style: TextStyle(
                 fontFamily: 'Poppins',
-                fontSize: 9,
-                color: color.withValues(alpha: 0.8),
+                fontSize: 8.5,
+                color: color.withValues(alpha: 0.85),
               ),
             ),
           ],

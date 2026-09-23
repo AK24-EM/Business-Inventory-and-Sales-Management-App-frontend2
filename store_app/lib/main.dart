@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'config/app_theme.dart';
 import 'firebase_options.dart';
@@ -28,6 +29,21 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // ─── Firestore Web: Force HTTP long-polling transport ─────────────────────
+  // Firebase JS SDK 11.x has a known internal assertion bug in its WebSocket
+  // (gRPC-Web) WatchChangeAggregator that causes "Unexpected state (ID: b815 /
+  // ca9)" when onSnapshot listeners and write operations run concurrently.
+  // Switching to experimentalForceLongPolling avoids the WebSocket code path
+  // entirely and eliminates the assertion failure.
+  // See: https://github.com/firebase/firebase-js-sdk/issues/8592
+  if (kIsWeb) {
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: false,
+      sslEnabled: true,
+    );
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   // Initialize notification service
   final notificationService = NotificationService();

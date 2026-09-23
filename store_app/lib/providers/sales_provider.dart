@@ -193,7 +193,7 @@ class SalesProvider extends ChangeNotifier {
     } catch (e) {
       _error = e.toString();
       notifyListeners();
-      return null;
+      rethrow;
     } finally {
       _isProcessing = false;
       notifyListeners();
@@ -202,4 +202,11 @@ class SalesProvider extends ChangeNotifier {
 
   Stream<List<SaleModel>> watchTodaySales(String storeId) =>
       _service.getTodaySalesStream(storeId);
+
+  Stream<List<SaleModel>> watchSalesByStore(
+          String storeId, DateTime from, DateTime to) =>
+      _service.getSalesByStoreStream(storeId, from, to);
+
+  Stream<List<SaleModel>> watchAllSales(DateTime from, DateTime to) =>
+      _service.getAllSalesStream(from, to);
 }

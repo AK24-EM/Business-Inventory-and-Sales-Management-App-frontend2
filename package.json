@@ -1,0 +1,24 @@
+{
+  "name": "store_invemtory_mamanagement",
+  "version": "1.0.0",
+  "description": "A comprehensive Flutter-based inventory and sales management system with role-based access control.",
+  "main": "set_custom_claims.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AK24-EM/Business-Inventory-and-Sales-Management-App-frontend2.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AK24-EM/Business-Inventory-and-Sales-Management-App-frontend2/issues"
+  },
+  "homepage": "https://github.com/AK24-EM/Business-Inventory-and-Sales-Management-App-frontend2#readme",
+  "dependencies": {
+    "firebase-admin": "^14.4.0"
+  }
+}

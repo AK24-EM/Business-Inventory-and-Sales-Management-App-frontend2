@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../../config/app_theme.dart';
 import '../../config/app_constants.dart';
 import '../../providers/product_provider.dart';
+import '../../providers/store_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../models/product_model.dart';
 
 class ProductManagementScreen extends StatelessWidget {
@@ -183,6 +185,8 @@ class _AddProductSheetState extends State<_AddProductSheet> {
   final _descCtrl = TextEditingController();
   final _buyPriceCtrl = TextEditingController();
   final _sellPriceCtrl = TextEditingController();
+  final _stockCtrl = TextEditingController(text: '20');
+  final _minStockCtrl = TextEditingController(text: '5');
   final _barcodeCtrl = TextEditingController();
   String _category = AppConstants.productCategories.first;
   String _unit = AppConstants.unitTypes.first;
@@ -194,6 +198,8 @@ class _AddProductSheetState extends State<_AddProductSheet> {
     _descCtrl.dispose();
     _buyPriceCtrl.dispose();
     _sellPriceCtrl.dispose();
+    _stockCtrl.dispose();
+    _minStockCtrl.dispose();
     _barcodeCtrl.dispose();
     super.dispose();
   }
@@ -202,24 +208,36 @@ class _AddProductSheetState extends State<_AddProductSheet> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await context.read<ProductProvider>().addProduct(ProductModel(
-            id: '',
-            name: _nameCtrl.text.trim(),
-            category: _category,
-            description: _descCtrl.text.trim(),
-            purchasePrice: double.parse(_buyPriceCtrl.text),
-            sellingPrice: double.parse(_sellPriceCtrl.text),
-            unit: _unit,
-            barcode: _barcodeCtrl.text.trim().isEmpty
-                ? null
-                : _barcodeCtrl.text.trim(),
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ));
+      final store = context.read<StoreProvider>().selectedStore;
+      final auth = context.read<AuthProvider>().currentUser;
+      final initialStock = int.tryParse(_stockCtrl.text.trim()) ?? 0;
+      final minStock = int.tryParse(_minStockCtrl.text.trim()) ?? 5;
+
+      await context.read<ProductProvider>().addProduct(
+            ProductModel(
+              id: '',
+              name: _nameCtrl.text.trim(),
+              category: _category,
+              description: _descCtrl.text.trim(),
+              purchasePrice: double.parse(_buyPriceCtrl.text),
+              sellingPrice: double.parse(_sellPriceCtrl.text),
+              unit: _unit,
+              barcode: _barcodeCtrl.text.trim().isEmpty
+                  ? null
+                  : _barcodeCtrl.text.trim(),
+              createdAt: DateTime.now(),
+              updatedAt: DateTime.now(),
+            ),
+            initialStock: initialStock,
+            minStock: minStock,
+            storeId: store?.id ?? 'store_01',
+            userId: auth?.id,
+            userName: auth?.name,
+          );
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Product added.')));
+            const SnackBar(content: Text('✓ Product and initial stock saved to Firestore.')));
       }
     } catch (e) {
       if (mounted) {

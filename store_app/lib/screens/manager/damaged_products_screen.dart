@@ -6,6 +6,7 @@ import '../../config/app_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/store_provider.dart';
 import '../../providers/product_provider.dart';
+import '../../providers/inventory_provider.dart';
 import '../../services/supplier_service.dart';
 import '../../models/supplier_model.dart';
 
@@ -20,10 +21,12 @@ class DamagedProductsScreen extends StatefulWidget {
 
 class _DamagedProductsScreenState extends State<DamagedProductsScreen> {
   final SupplierService _service = SupplierService();
+  String _statusFilter = 'All'; // 'All', 'Pending', 'Approved', 'Rejected'
 
   @override
   Widget build(BuildContext context) {
     final storeId = context.watch<StoreProvider>().selectedStore?.id ?? '';
+    final invProvider = context.watch<InventoryProvider>();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
@@ -43,126 +46,210 @@ class _DamagedProductsScreenState extends State<DamagedProductsScreen> {
         elevation: 4,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.only(bottom: 80),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 1. Top Enterprise Store Header
-              const StoreHeaderWidget(
-                title: 'Damage & Shrinkage',
-                subtitle: 'AUDIT & WRITE-OFF APPROVALS • Downtown Hub',
-              ),
+        child: StreamBuilder<List<DamagedProduct>>(
+          stream: invProvider.watchDamageReports(storeId),
+          builder: (context, snap) {
+            final allReports = snap.data ?? [];
+            final pendingReports =
+                allReports.where((r) => r.status == 'pending').toList();
+            final totalLoss = allReports.fold<double>(
+                0.0, (acc, r) => acc + r.estimatedLoss);
 
-              // 1b. Damage Control Banner
-              _buildDamageBanner(),
+            final filteredReports = allReports.where((r) {
+              if (_statusFilter == 'Pending') return r.status == 'pending';
+              if (_statusFilter == 'Approved') return r.status == 'approved';
+              if (_statusFilter == 'Rejected') return r.status == 'rejected';
+              return true;
+            }).toList();
 
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // 2. Summary KPI Metrics
-                    _buildDamageKPIRow(),
-                    const SizedBox(height: 16),
+            return SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.only(bottom: 80),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 1. Top Enterprise Store Header
+                  const StoreHeaderWidget(
+                    title: 'Damage & Shrinkage',
+                    subtitle: 'AUDIT & WRITE-OFF APPROVALS • Downtown Hub',
+                  ),
 
-                    // 3. Incident Log Header
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  // 1b. Damage Control Banner
+                  _buildDamageBanner(
+                    pendingCount: pendingReports.length,
+                    totalLoss: totalLoss,
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Text(
-                          'INCIDENT LOG & WRITE-OFFS',
-                          style: TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF64748B),
-                            letterSpacing: 0.5,
+                        // 2. Summary KPI Metrics
+                        _buildDamageKPIRow(
+                          totalLoss: totalLoss,
+                          pendingCount: pendingReports.length,
+                          totalReports: allReports.length,
+                        ),
+                        const SizedBox(height: 16),
+
+                        // 3. Filter Chips
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              _buildFilterChip('All (${allReports.length})', 'All'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip(
+                                  'Pending (${pendingReports.length})', 'Pending'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip(
+                                  'Approved (${allReports.where((r) => r.status == "approved").length})',
+                                  'Approved'),
+                              const SizedBox(width: 8),
+                              _buildFilterChip(
+                                  'Rejected (${allReports.where((r) => r.status == "rejected").length})',
+                                  'Rejected'),
+                            ],
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEE2E2),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Text(
-                            '3 Pending Sign-off',
-                            style: TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFFDC2626),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
+                        const SizedBox(height: 14),
 
-                    // 4. Incidents Stream or Fallback Feed
-                    StreamBuilder<List<DamagedProduct>>(
-                      stream: _service.getDamagedProductsStream(storeId: storeId),
-                      builder: (context, snap) {
-                        final liveItems = snap.data ?? [];
-                        if (liveItems.isNotEmpty) {
-                          return Column(
-                            children: liveItems
-                                .map((item) => _DamagedIncidentCard(item: item))
-                                .toList(),
-                          );
-                        }
-
-                        // Realistic Demo Incidents matching the screenshot inspiration
-                        return Column(
+                        // 4. Incident Log Header
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            _buildDemoIncidentCard(
-                              id: 'DM-0492',
-                              productName: 'Alfonso Mango Pulp 850g',
-                              sku: 'SKU: AMP-102',
-                              quantity: 3,
-                              lossAmount: '₹420.00',
-                              reason: 'Broken Packaging / Seal Leak',
-                              supplierName: 'Fresh Agro Farm Supplies',
-                              timeAgo: 'Today, 11:20 AM',
-                              cashierName: 'Alex Cashier',
-                              photoCount: 2,
+                            const Text(
+                              'INCIDENT LOG & WRITE-OFFS',
+                              style: TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF64748B),
+                                letterSpacing: 0.5,
+                              ),
                             ),
-                            const SizedBox(height: 12),
-                            _buildDemoIncidentCard(
-                              id: 'DM-0488',
-                              productName: 'Organic Almond Milk 1L',
-                              sku: 'SKU: OAM-104',
-                              quantity: 2,
-                              lossAmount: '₹480.00',
-                              reason: 'Expired / Fermented',
-                              supplierName: 'ITC Hub Direct',
-                              timeAgo: 'Yesterday, 3:45 PM',
-                              cashierName: 'Sarah Jenkins',
-                              photoCount: 1,
-                            ),
-                            const SizedBox(height: 12),
-                            _buildDemoIncidentCard(
-                              id: 'DM-0475',
-                              productName: 'Basmati Royal Rice 5kg',
-                              sku: 'SKU: BRR-501',
-                              quantity: 1,
-                              lossAmount: '₹550.00',
-                              reason: 'Torn Bag in Transit',
-                              supplierName: 'ITC Hub Direct',
-                              timeAgo: '10 Sep 2026',
-                              cashierName: 'John Miller',
-                              photoCount: 3,
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: pendingReports.isNotEmpty
+                                    ? const Color(0xFFFEE2E2)
+                                    : const Color(0xFFDCFCE7),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                pendingReports.isNotEmpty
+                                    ? '${pendingReports.length} Pending Sign-off'
+                                    : 'All Signed Off ✓',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: pendingReports.isNotEmpty
+                                      ? const Color(0xFFDC2626)
+                                      : const Color(0xFF166534),
+                                ),
+                              ),
                             ),
                           ],
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 10),
+
+                        // 5. Incidents Stream or Fallback Feed
+                        if (filteredReports.isNotEmpty)
+                          Column(
+                            children: filteredReports
+                                .map((item) =>
+                                    _LiveDamagedIncidentCard(item: item))
+                                .toList(),
+                          )
+                        else if (allReports.isEmpty)
+                          // Realistic Demo Incidents if database is fresh
+                          Column(
+                            children: [
+                              _buildDemoIncidentCard(
+                                id: 'DM-0492',
+                                productName: 'Alfonso Mango Pulp 850g',
+                                sku: 'SKU: AMP-102',
+                                quantity: 3,
+                                lossAmount: '₹420.00',
+                                reason: 'Broken Packaging / Seal Leak',
+                                supplierName: 'Fresh Agro Farm Supplies',
+                                timeAgo: 'Today, 11:20 AM',
+                                cashierName: 'Alex Cashier',
+                                photoCount: 2,
+                              ),
+                              const SizedBox(height: 12),
+                              _buildDemoIncidentCard(
+                                id: 'DM-0488',
+                                productName: 'Organic Almond Milk 1L',
+                                sku: 'SKU: OAM-104',
+                                quantity: 2,
+                                lossAmount: '₹480.00',
+                                reason: 'Expired / Fermented',
+                                supplierName: 'ITC Hub Direct',
+                                timeAgo: 'Yesterday, 3:45 PM',
+                                cashierName: 'Sarah Jenkins',
+                                photoCount: 1,
+                              ),
+                            ],
+                          )
+                        else
+                          Container(
+                            padding: const EdgeInsets.symmetric(vertical: 40),
+                            alignment: Alignment.center,
+                            child: Column(
+                              children: [
+                                const Icon(Icons.check_circle_outline_rounded,
+                                    size: 40, color: Color(0xFF10B981)),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'No $_statusFilter damage reports found.',
+                                  style: const TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 13,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, String value) {
+    final isSelected = _statusFilter == value;
+    return InkWell(
+      onTap: () => setState(() => _statusFilter = value),
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFDC2626) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? const Color(0xFFDC2626) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+            color: isSelected ? Colors.white : const Color(0xFF64748B),
           ),
         ),
       ),
@@ -170,7 +257,7 @@ class _DamagedProductsScreenState extends State<DamagedProductsScreen> {
   }
 
   // ── Gradient Damage & Loss Control Banner ──
-  Widget _buildDamageBanner() {
+  Widget _buildDamageBanner({required int pendingCount, required double totalLoss}) {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       padding: const EdgeInsets.all(18),
@@ -266,11 +353,11 @@ class _DamagedProductsScreenState extends State<DamagedProductsScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _damageBannerStat('Pending', '3 Items', Icons.pending_actions_rounded, const Color(0xFFFDE68A)),
+                _damageBannerStat('Pending', '$pendingCount Items', Icons.pending_actions_rounded, const Color(0xFFFDE68A)),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
-                _damageBannerStat('Month Value', '₹3,420', Icons.currency_rupee_rounded, const Color(0xFFFCA5A5)),
+                _damageBannerStat('Total Loss', '₹${totalLoss.toStringAsFixed(0)}', Icons.currency_rupee_rounded, const Color(0xFFFCA5A5)),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
-                _damageBannerStat('Rate', '0.28%', Icons.trending_down_rounded, const Color(0xFF86EFAC)),
+                _damageBannerStat('Approval', pendingCount == 0 ? '100%' : 'Needs Review', Icons.trending_down_rounded, const Color(0xFF86EFAC)),
               ],
             ),
           ),
@@ -306,14 +393,18 @@ class _DamagedProductsScreenState extends State<DamagedProductsScreen> {
   }
 
   // ── KPI Summary Row ──
-  Widget _buildDamageKPIRow() {
+  Widget _buildDamageKPIRow({
+    required double totalLoss,
+    required int pendingCount,
+    required int totalReports,
+  }) {
     return Row(
       children: [
         Expanded(
           child: _buildKPICard(
-            title: 'MONTH SHRINKAGE',
-            value: '₹3,420',
-            badgeText: '0.28% of sales',
+            title: 'RECORDED LOSS',
+            value: '₹${totalLoss.toStringAsFixed(0)}',
+            badgeText: '$totalReports reports',
             badgeColor: const Color(0xFFEF4444),
             badgeBg: const Color(0xFFFEE2E2),
             icon: Icons.broken_image_rounded,
@@ -323,21 +414,21 @@ class _DamagedProductsScreenState extends State<DamagedProductsScreen> {
         Expanded(
           child: _buildKPICard(
             title: 'PENDING SIGN-OFF',
-            value: '3 items',
-            badgeText: 'Action req.',
-            badgeColor: const Color(0xFFF59E0B),
-            badgeBg: const Color(0xFFFEF3C7),
+            value: '$pendingCount items',
+            badgeText: pendingCount > 0 ? 'Action req.' : 'All clear',
+            badgeColor: pendingCount > 0 ? const Color(0xFFF59E0B) : const Color(0xFF10B981),
+            badgeBg: pendingCount > 0 ? const Color(0xFFFEF3C7) : const Color(0xFFDCFCE7),
             icon: Icons.pending_actions_rounded,
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: _buildKPICard(
-            title: 'RESOLUTION',
-            value: '94.2%',
-            badgeText: 'Vendor claims',
-            badgeColor: const Color(0xFF10B981),
-            badgeBg: const Color(0xFFDCFCE7),
+            title: 'INCIDENTS',
+            value: '$totalReports logged',
+            badgeText: 'Live audit log',
+            badgeColor: const Color(0xFF2563EB),
+            badgeBg: const Color(0xFFEFF6FF),
             icon: Icons.verified_rounded,
           ),
         ),
@@ -771,55 +862,332 @@ class _InteractiveDamageCardState extends State<_InteractiveDamageCard> {
   }
 }
 
-class _DamagedIncidentCard extends StatelessWidget {
+class _LiveDamagedIncidentCard extends StatefulWidget {
   final DamagedProduct item;
-  const _DamagedIncidentCard({required this.item});
+  const _LiveDamagedIncidentCard({required this.item});
+
+  @override
+  State<_LiveDamagedIncidentCard> createState() => _LiveDamagedIncidentCardState();
+}
+
+class _LiveDamagedIncidentCardState extends State<_LiveDamagedIncidentCard> {
+  bool _updating = false;
+
+  Future<void> _handleStatusUpdate(String status) async {
+    setState(() => _updating = true);
+    final auth = context.read<AuthProvider>();
+    final invProvider = context.read<InventoryProvider>();
+
+    try {
+      await invProvider.updateDamageReportStatus(
+        reportId: widget.item.id,
+        status: status,
+        userId: auth.currentUser?.id ?? 'mgr_01',
+        userName: auth.currentUser?.name ?? 'Store Manager',
+        note: status == 'rejected' ? 'Rejected by Manager - stock restored' : 'Write-off approved',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(status == 'approved'
+                ? '✓ Incident approved and written off to shrinkage.'
+                : '✕ Damage report rejected. Stock has been restored.'),
+            backgroundColor: status == 'approved' ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _updating = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final item = widget.item;
+    final isPending = item.status == 'pending';
+    final isApproved = item.status == 'approved';
+
+    final Color statusColor = isApproved
+        ? const Color(0xFF10B981)
+        : isPending
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFF64748B);
+
+    final Color statusBg = isApproved
+        ? const Color(0xFFDCFCE7)
+        : isPending
+            ? const Color(0xFFFEF3C7)
+            : const Color(0xFFF1F5F9);
+
+    final String statusLabel = isApproved
+        ? 'APPROVED WRITE-OFF'
+        : isPending
+            ? 'PENDING SIGN-OFF'
+            : 'REJECTED (RESTORED)';
+
+    final dateStr =
+        '${item.reportedAt.day.toString().padLeft(2, '0')}/${item.reportedAt.month.toString().padLeft(2, '0')} ${item.reportedAt.hour.toString().padLeft(2, '0')}:${item.reportedAt.minute.toString().padLeft(2, '0')}';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+          color: isPending ? const Color(0xFFFCA5A5) : const Color(0xFFE2E8F0),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header: ID + Date + Status Pill
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                item.productName,
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF0F172A),
-                ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      item.id.length > 8 ? item.id.substring(0, 8).toUpperCase() : item.id.toUpperCase(),
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF2563EB),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    dateStr,
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11,
+                      color: Color(0xFF94A3B8),
+                    ),
+                  ),
+                ],
               ),
-              Text(
-                '${item.quantity} units',
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFEF4444),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusBg,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  statusLabel,
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    color: statusColor,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Supplier: ${item.supplierName} • ${item.reason}',
-            style: const TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 11.5,
-              color: Color(0xFF64748B),
+          const SizedBox(height: 10),
+
+          // Product Details & Loss
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.productName,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Reported by ${item.reportedByUserName.isNotEmpty ? item.reportedByUserName : "Store Employee"}',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '-₹${item.estimatedLoss.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFDC2626),
+                    ),
+                  ),
+                  Text(
+                    '${item.quantity} units damaged',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          // Reason Pill
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFF1F5F9)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 14, color: Color(0xFF64748B)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Reason: ${item.reason}${item.notes != null && item.notes!.isNotEmpty ? " • ${item.notes}" : ""}',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11,
+                      color: Color(0xFF475569),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(height: 12),
+
+          // Actions
+          if (_updating)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (isPending)
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => _handleStatusUpdate('rejected'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      side: const BorderSide(color: Color(0xFFCBD5E1)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Reject & Restore Stock',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF475569),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _handleStatusUpdate('approved'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF10B981),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Approve Write-off',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+              decoration: BoxDecoration(
+                color: isApproved ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    isApproved ? Icons.verified_rounded : Icons.info_outline,
+                    size: 14,
+                    color: isApproved ? const Color(0xFF059669) : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    isApproved
+                        ? '✓ Signed off by ${item.approvedByUserName ?? "Manager"} • Reconciled'
+                        : '✕ Rejected by ${item.approvedByUserName ?? "Manager"} • Stock Restored',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isApproved ? const Color(0xFF059669) : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -860,34 +1228,40 @@ class _ReportDamageSheetState extends State<_ReportDamageSheet> {
     final auth = context.read<AuthProvider>();
 
     try {
-      await widget.service.recordDamagedProduct(
-        DamagedProduct(
-          id: '',
-          storeId: store.selectedStore?.id ?? 'store_1',
-          productId: _selectedProductId ?? 'p_custom',
-          productName: _selectedProductName ?? 'Damaged Item',
-          supplierId: _selectedSupplierId,
-          supplierName: _selectedSupplierName,
-          quantity: _quantity,
-          estimatedLoss: _purchasePrice * _quantity,
-          reason: _reason,
-          reportedAt: DateTime.now(),
-          reportedByUserId: auth.currentUser?.id ?? 'mgr_01',
-          reportedByUserName: auth.currentUser?.name ?? 'Store Manager',
-          notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
-        ),
+      await context.read<InventoryProvider>().reportDamage(
+        storeId: store.selectedStore?.id ?? 'store_1',
+        productId: _selectedProductId ?? 'p_custom',
+        productName: _selectedProductName ?? 'Damaged Item',
+        supplierId: _selectedSupplierId,
+        supplierName: _selectedSupplierName,
+        quantity: _quantity,
+        estimatedLoss: _purchasePrice * _quantity,
+        reason: _reason,
+        userId: auth.currentUser?.id ?? 'mgr_01',
+        userName: auth.currentUser?.name ?? 'Store Manager',
+        notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       );
-    } catch (_) {}
-
-    if (mounted) {
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✓ Incident recorded and added to audit queue.'),
-          backgroundColor: Color(0xFF10B981),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Damage incident logged in Firestore and inventory deducted.'),
+            backgroundColor: Color(0xFF10B981),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error reporting damage: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

@@ -49,7 +49,20 @@ class AuthService {
     //    before any Firestore rule evaluation or Cloud Run REST call.
     try {
       await user.getIdToken(true);
-    } catch (_) {}
+      
+      // DEBUG: Check if custom claims are present
+      final tokenResult = await user.getIdTokenResult(true);
+      print('🔑 DEBUG: Token claims for ${model.email}:');
+      print('   Role: ${tokenResult.claims?['role']}');
+      print('   StoreId: ${tokenResult.claims?['storeId']}');
+      
+      if (tokenResult.claims?['role'] == null) {
+        print('⚠️  WARNING: Custom claims not set! Run: node set_custom_claims.js');
+        print('⚠️  Then sign out and sign in again.');
+      }
+    } catch (e) {
+      print('❌ Error checking token claims: $e');
+    }
 
     _updateLastLogin(user.uid);
     _userController.add(model);

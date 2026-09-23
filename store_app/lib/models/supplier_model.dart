@@ -203,6 +203,10 @@ class DamagedProduct {
   final String reportedByUserId;
   final String reportedByUserName;
   final String? notes;
+  final String status; // 'pending', 'approved', 'rejected'
+  final String? approvedByUserId;
+  final String? approvedByUserName;
+  final DateTime? approvedAt;
 
   const DamagedProduct({
     required this.id,
@@ -218,6 +222,10 @@ class DamagedProduct {
     required this.reportedByUserId,
     required this.reportedByUserName,
     this.notes,
+    this.status = 'pending',
+    this.approvedByUserId,
+    this.approvedByUserName,
+    this.approvedAt,
   });
 
   factory DamagedProduct.fromFirestore(DocumentSnapshot doc) {
@@ -237,6 +245,10 @@ class DamagedProduct {
       reportedByUserId: data['reportedByUserId'] ?? '',
       reportedByUserName: data['reportedByUserName'] ?? '',
       notes: data['notes'],
+      status: data['status'] ?? 'pending',
+      approvedByUserId: data['approvedByUserId'],
+      approvedByUserName: data['approvedByUserName'],
+      approvedAt: (data['approvedAt'] as Timestamp?)?.toDate(),
     );
   }
 
@@ -254,6 +266,38 @@ class DamagedProduct {
       'reportedByUserId': reportedByUserId,
       'reportedByUserName': reportedByUserName,
       'notes': notes,
+      'status': status,
+      'approvedByUserId': approvedByUserId,
+      'approvedByUserName': approvedByUserName,
+      'approvedAt':
+          approvedAt != null ? Timestamp.fromDate(approvedAt!) : null,
     };
+  }
+
+  DamagedProduct copyWith({
+    String? status,
+    String? approvedByUserId,
+    String? approvedByUserName,
+    DateTime? approvedAt,
+  }) {
+    return DamagedProduct(
+      id: id,
+      productId: productId,
+      productName: productName,
+      supplierId: supplierId,
+      supplierName: supplierName,
+      storeId: storeId,
+      quantity: quantity,
+      estimatedLoss: estimatedLoss,
+      reason: reason,
+      reportedAt: reportedAt,
+      reportedByUserId: reportedByUserId,
+      reportedByUserName: reportedByUserName,
+      notes: notes,
+      status: status ?? this.status,
+      approvedByUserId: approvedByUserId ?? this.approvedByUserId,
+      approvedByUserName: approvedByUserName ?? this.approvedByUserName,
+      approvedAt: approvedAt ?? this.approvedAt,
+    );
   }
 }

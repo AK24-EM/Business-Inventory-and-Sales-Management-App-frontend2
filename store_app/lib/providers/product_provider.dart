@@ -3,15 +3,45 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import '../config/app_constants.dart';
 import '../models/product_model.dart';
+import '../services/inventory_service.dart';
 
 class ProductProvider extends ChangeNotifier {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final InventoryService _inventoryService = InventoryService();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
 
   List<ProductModel> _products = [];
   bool _isLoading = false;
   String? _error;
   String _searchQuery = '';
   String _selectedCategory = 'All';
+
+  ProductProvider() {
+    _initStream();
+  }
+
+  void _initStream() {
+    _isLoading = true;
+    _sub = _col.snapshots().listen(
+      (snap) {
+        _products = snap.docs.map(ProductModel.fromFirestore).toList();
+        _isLoading = false;
+        _error = null;
+        notifyListeners();
+      },
+      onError: (e) {
+        _error = e.toString();
+        _isLoading = false;
+        notifyListeners();
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   List<ProductModel> get products => _products;
   bool get isLoading => _isLoading;
@@ -72,7 +102,14 @@ class ProductProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<ProductModel> addProduct(ProductModel product) async {
+  Future<ProductModel> addProduct(
+    ProductModel product, {
+    int initialStock = 0,
+    int minStock = AppConstants.defaultMinStockLevel,
+    String? storeId,
+    String? userId,
+    String? userName,
+  }) async {
     final ref = _col.doc();
     final now = DateTime.now();
     final created = ProductModel(
@@ -90,7 +127,20 @@ class ProductProvider extends ChangeNotifier {
       updatedAt: now,
     );
     await ref.set(created.toFirestore());
-    await loadProducts();
+
+    // Automatically initialize inventory for the store so the product can be sold immediately
+    final targetStore = (storeId != null && storeId.isNotEmpty) ? storeId : 'store_01';
+    await _inventoryService.initializeInventoryForProduct(
+      storeId: targetStore,
+      productId: created.id,
+      productName: created.name,
+      category: created.category,
+      initialStock: initialStock,
+      minStock: minStock,
+      userId: userId,
+      userName: userName,
+    );
+
     return created;
   }
 
