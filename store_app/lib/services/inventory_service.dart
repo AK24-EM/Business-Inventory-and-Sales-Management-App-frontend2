@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../config/app_constants.dart';
 import '../models/inventory_model.dart';
+import '../models/restock_model.dart';
 import '../models/supplier_model.dart';
 
 class InventoryService {
@@ -16,6 +17,8 @@ class InventoryService {
       _db.collection(AppConstants.stockTransfersCollection);
   CollectionReference<Map<String, dynamic>> get _damaged =>
       _db.collection(AppConstants.damagedProductsCollection);
+  CollectionReference<Map<String, dynamic>> get _restocks =>
+      _db.collection(AppConstants.restocksCollection);
 
   String _itemId(String storeId, String productId) => 'inv_${storeId}_$productId';
 
@@ -102,8 +105,14 @@ class InventoryService {
     required int quantity,
     required String userId,
     required String userName,
+    String? storeName,
+    String? category,
+    String? supplierId,
+    String? supplierName,
+    double unitCost = 0.0,
     String? notes,
   }) async {
+    // 1. Update inventory + log stockMovement (existing flow)
     await _changeStock(
       storeId: storeId,
       productId: productId,
@@ -114,6 +123,108 @@ class InventoryService {
       userName: userName,
       reason: notes ?? 'Quick Restock from Manager Hub',
     );
+
+    // 2. Also write a dedicated restock document for the restocks collection
+    try {
+      final invSnap = await _inv.doc(_itemId(storeId, productId)).get();
+      final stockAfter = invSnap.exists
+          ? ((invSnap.data()!['currentStock'] as num?)?.toInt() ?? 0)
+          : quantity;
+      final stockBefore = stockAfter - quantity;
+
+      final restock = RestockModel(
+        id: '',
+        storeId: storeId,
+        storeName: storeName ?? storeId,
+        productId: productId,
+        productName: productName,
+        category: category ?? (invSnap.exists ? (invSnap.data()!['category'] ?? '') : ''),
+        quantity: quantity,
+        stockBefore: stockBefore < 0 ? 0 : stockBefore,
+        stockAfter: stockAfter,
+        unitCost: unitCost,
+        totalCost: unitCost * quantity,
+        supplierId: supplierId,
+        supplierName: supplierName ?? '',
+        performedByUserId: userId,
+        performedByUserName: userName,
+        source: 'quick_restock',
+        notes: notes,
+        timestamp: DateTime.now(),
+      );
+      await _restocks.add(restock.toFirestore());
+    } catch (e) {
+      // Non-fatal — inventory was already updated; restock log is supplementary
+      debugPrint('Warning: Failed to write to restocks collection: $e');
+    }
+  }
+
+  /// Log a restock event coming from a received Purchase Order.
+  Future<void> logRestockFromPurchaseOrder({
+    required String storeId,
+    required String storeName,
+    required String productId,
+    required String productName,
+    required String category,
+    required int quantity,
+    required int stockBefore,
+    required int stockAfter,
+    required String supplierId,
+    required String supplierName,
+    required String purchaseOrderId,
+    required double unitCost,
+    required String userId,
+    required String userName,
+    String? notes,
+  }) async {
+    final restock = RestockModel(
+      id: '',
+      storeId: storeId,
+      storeName: storeName,
+      productId: productId,
+      productName: productName,
+      category: category,
+      quantity: quantity,
+      stockBefore: stockBefore,
+      stockAfter: stockAfter,
+      unitCost: unitCost,
+      totalCost: unitCost * quantity,
+      supplierId: supplierId,
+      supplierName: supplierName,
+      purchaseOrderId: purchaseOrderId,
+      performedByUserId: userId,
+      performedByUserName: userName,
+      source: 'purchase_order',
+      notes: notes,
+      timestamp: DateTime.now(),
+    );
+    await _restocks.add(restock.toFirestore());
+  }
+
+  /// Real-time stream of restock events for a specific store.
+  /// Ordered newest first in memory to avoid requiring a composite Firestore index.
+  Stream<List<RestockModel>> getRestocksStream(String storeId) {
+    return _restocks
+        .where('storeId', isEqualTo: storeId)
+        .snapshots()
+        .map((snap) {
+          final items = snap.docs.map(RestockModel.fromFirestore).toList();
+          items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          if (items.length > 100) return items.sublist(0, 100);
+          return items;
+        });
+  }
+
+  /// One-time fetch of restock history for a store.
+  Future<List<RestockModel>> getRestocksForStore(String storeId,
+      {int limit = 50}) async {
+    final snap = await _restocks
+        .where('storeId', isEqualTo: storeId)
+        .get();
+    final items = snap.docs.map(RestockModel.fromFirestore).toList();
+    items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    if (items.length > limit) return items.sublist(0, limit);
+    return items;
   }
 
   Future<void> receiveStock({

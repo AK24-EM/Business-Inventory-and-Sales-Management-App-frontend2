@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/inventory_model.dart';
+import '../models/restock_model.dart';
 import '../models/supplier_model.dart';
 import '../services/inventory_service.dart';
 
@@ -96,6 +97,23 @@ class InventoryProvider extends ChangeNotifier {
         .map((items) => items.where((i) => i.isLowStock).toList());
   }
 
+  Map<String, Stream<List<RestockModel>>>? _restockStreams;
+  Map<String, Stream<List<RestockModel>>> get _safeRestockStreams =>
+      _restockStreams ??= <String, Stream<List<RestockModel>>>{};
+
+  /// Real-time stream of restock events from the dedicated `restocks` collection.
+  Stream<List<RestockModel>> watchRestocks(String storeId) {
+    if (storeId.isEmpty) return const Stream.empty();
+    return _safeRestockStreams.putIfAbsent(
+      storeId,
+      () => _service.getRestocksStream(storeId).asBroadcastStream(),
+    );
+  }
+
+  /// One-time fetch of restock history (useful for reports/analytics).
+  Future<List<RestockModel>> fetchRestocks(String storeId, {int limit = 50}) =>
+      _service.getRestocksForStore(storeId, limit: limit);
+
   Stream<List<StockTransfer>> watchPendingTransfers(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
     return _safePendingTransferStreams.putIfAbsent(
@@ -130,6 +148,11 @@ class InventoryProvider extends ChangeNotifier {
     required int quantity,
     required String userId,
     required String userName,
+    String? storeName,
+    String? category,
+    String? supplierId,
+    String? supplierName,
+    double unitCost = 0.0,
     String? notes,
   }) async {
     try {
@@ -140,6 +163,11 @@ class InventoryProvider extends ChangeNotifier {
         quantity: quantity,
         userId: userId,
         userName: userName,
+        storeName: storeName,
+        category: category,
+        supplierId: supplierId,
+        supplierName: supplierName,
+        unitCost: unitCost,
         notes: notes,
       );
       notifyListeners();

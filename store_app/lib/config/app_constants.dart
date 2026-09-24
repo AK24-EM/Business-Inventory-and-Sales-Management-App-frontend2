@@ -37,6 +37,7 @@ class AppConstants {
   static const String festivalsCollection = 'festivals';
   static const String festivalAlertsCollection = 'festivalAlerts';
   static const String notificationsCollection = 'notifications';
+  static const String restocksCollection = 'restocks'; // Dedicated restock events
 
   // Date Formats
   static const String displayDateFormat = 'dd MMM yyyy';

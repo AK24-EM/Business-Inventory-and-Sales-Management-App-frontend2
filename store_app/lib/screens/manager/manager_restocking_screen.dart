@@ -12,6 +12,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/inventory_provider.dart';
 import '../../providers/supplier_provider.dart';
 import '../../models/inventory_model.dart';
+import '../../models/restock_model.dart';
 import '../../models/supplier_model.dart';
 import '../../models/analytics_model.dart';
 import '../../services/sales_service.dart';
@@ -420,7 +421,13 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
             quantity: qty,
             userId: user?.id ?? 'manager',
             userName: user?.name ?? 'Store Manager',
-            notes: '⚡ Real-time Quick Restock (+ $qty units)',
+            // Extra context written to the dedicated restocks collection
+            storeName: req.storeName,
+            category: req.category,
+            supplierId: req.supplierId,
+            supplierName: req.supplierName,
+            unitCost: req.purchasePrice,
+            notes: '⚡ Quick Restock from Manager Hub (+$qty units)',
           );
 
       if (mounted) {
@@ -461,6 +468,7 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
       }
     }
   }
+
 
   Future<void> _generatePurchaseOrders() async {
     final targetList = _activeTab == 'needs_restock' ? _needsRestockList : _allRequirements;
@@ -1083,146 +1091,237 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
     }
 
     final inventoryProvider = context.read<InventoryProvider>();
-    return StreamBuilder<List<StockMovement>>(
-      stream: inventoryProvider.watchMovements(storeId, ''),
+    final fmt = NumberFormat('#,##,##0.00', 'en_IN');
+    final df = DateFormat('dd MMM yyyy • hh:mm a');
+
+    return StreamBuilder<List<RestockModel>>(
+      stream: inventoryProvider.watchRestocks(storeId),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
-            child: CircularProgressIndicator(color: Color(0xFF059669)),
-          );
-        }
-
-        final movements = snapshot.data ?? [];
-        final restocks = movements.where((m) => m.type == StockMovementType.receipt).toList();
-
-        if (restocks.isEmpty) {
-          return Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF1F5F9),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.history_rounded, size: 48, color: Color(0xFF94A3B8)),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'No restock movements recorded yet',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF475569),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'When products are restocked, live receipt events will appear here.',
-                  style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: Color(0xFF94A3B8)),
-                  textAlign: TextAlign.center,
-                ),
+                CircularProgressIndicator(color: Color(0xFF059669)),
+                SizedBox(height: 12),
+                Text('Loading restock history…',
+                    style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: Color(0xFF64748B))),
               ],
             ),
           );
         }
 
-        final df = DateFormat('dd MMM yyyy • hh:mm a');
+        final restocks = snapshot.data ?? [];
+
+        if (restocks.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFECFDF5),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF059669).withValues(alpha: 0.12),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.inventory_2_rounded, size: 48, color: Color(0xFF059669)),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No Restocks Yet',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'When you restock products using Quick Restock\nor generate Purchase Orders, they appear here.',
+                    style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: Color(0xFF94A3B8)),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
 
         return ListView.separated(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
           itemCount: restocks.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
           itemBuilder: (_, i) {
-            final m = restocks[i];
+            final r = restocks[i];
+            final isQuick = r.source == 'quick_restock';
+            final isPO = r.source == 'purchase_order';
+            final sourceColor = isPO ? const Color(0xFF7C3AED) : const Color(0xFF059669);
+            final sourceBg = isPO ? const Color(0xFFF3E8FF) : const Color(0xFFECFDF5);
+
             return Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: const Color(0xFFE2E8F0)),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 6,
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
                 ],
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFECFDF5),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.call_received_rounded, color: Color(0xFF059669), size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          m.productName,
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${m.reason ?? "Quick Restock"} • by ${m.userName}',
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 10.5,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
-                        Text(
-                          df.format(m.timestamp),
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 9.5,
-                            color: Color(0xFF94A3B8),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  Row(
                     children: [
+                      // Source icon
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.all(9),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF059669),
-                          borderRadius: BorderRadius.circular(8),
+                          color: sourceBg,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          isPO ? Icons.receipt_long_rounded : Icons.bolt_rounded,
+                          color: sourceColor,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Product name + meta
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              r.productName,
+                              style: const TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            if (r.category.isNotEmpty)
+                              Text(
+                                r.category,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 10,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      // Quantity badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: sourceColor,
+                          borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
-                          '+${m.quantity} Units',
+                          '+${r.quantity} units',
                           style: const TextStyle(
                             fontFamily: 'Poppins',
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Stock: ${m.stockBefore} → ${m.stockAfter}',
-                        style: const TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF475569),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  // Details row
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        // Stock flow
+                        Expanded(
+                          child: Row(
+                            children: [
+                              const Icon(Icons.trending_up_rounded, size: 14, color: Color(0xFF059669)),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Stock: ${r.stockBefore} → ${r.stockAfter}',
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF334155),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
+                        // Cost (if known)
+                        if (r.totalCost > 0)
+                          Text(
+                            '₹${fmt.format(r.totalCost)}',
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Bottom meta: source, supplier, who did it, when
+                  Row(
+                    children: [
+                      // Source badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: sourceBg,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          r.sourceLabel,
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: sourceColor,
+                          ),
+                        ),
+                      ),
+                      if (r.supplierName.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        const Icon(Icons.local_shipping_outlined, size: 10, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 3),
+                        Text(
+                          r.supplierName,
+                          style: const TextStyle(fontFamily: 'Poppins', fontSize: 9.5, color: Color(0xFF64748B)),
+                        ),
+                      ],
+                      const Spacer(),
+                      Text(
+                        '${r.performedByUserName} • ${df.format(r.timestamp)}',
+                        style: const TextStyle(fontFamily: 'Poppins', fontSize: 9, color: Color(0xFF94A3B8)),
                       ),
                     ],
                   ),
