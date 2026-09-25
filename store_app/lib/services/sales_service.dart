@@ -23,11 +23,10 @@ class SalesService {
     return _storeSalesStreams.putIfAbsent(storeId, () {
       return _sales
           .where('storeId', isEqualTo: storeId)
+          .orderBy('timestamp', descending: true) // Sort at Firestore level
           .snapshots()
           .map((snap) {
-            final list = snap.docs.map(SaleModel.fromFirestore).toList();
-            list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-            return list;
+            return snap.docs.map(SaleModel.fromFirestore).toList();
           })
           .asBroadcastStream();
     });
@@ -35,11 +34,10 @@ class SalesService {
 
   Stream<List<SaleModel>> _getRawAllSalesStream() {
     return _allSalesStream ??= _sales
+        .orderBy('timestamp', descending: true) // Sort at Firestore level
         .snapshots()
         .map((snap) {
-          final list = snap.docs.map(SaleModel.fromFirestore).toList();
-          list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-          return list;
+          return snap.docs.map(SaleModel.fromFirestore).toList();
         })
         .asBroadcastStream();
   }

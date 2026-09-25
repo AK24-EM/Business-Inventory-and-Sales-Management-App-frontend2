@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:rxdart/rxdart.dart';
 import '../models/sale_model.dart';
 import '../models/analytics_model.dart';
 import '../config/app_constants.dart';
@@ -212,6 +214,7 @@ class AnalyticsService {
 
   /// Single unified real-time stream that keeps summary, trends, products,
   /// customers, and sales in 100% lock-step synchronization.
+  /// Enhanced with debouncing and error handling for stability.
   Stream<AnalyticsBundle> watchAnalytics({
     List<String>? storeIds,
     String? storeId,
@@ -229,13 +232,20 @@ class AnalyticsService {
           from: from,
           to: to,
         )
+        .distinct() // Skip duplicate events
+        .debounceTime(const Duration(milliseconds: 500)) // Debounce rapid updates
         .map((sales) => computeAnalyticsBundle(
               sales,
               from,
               to,
               storeId: storeId ?? (effectiveStoreIds.length == 1 ? effectiveStoreIds.first : null),
               productLimit: productLimit,
-            ));
+            ))
+        .handleError((error) {
+          debugPrint('Analytics stream error: $error');
+          // Return empty bundle on error to keep UI functional
+          return computeAnalyticsBundle([], from, to, productLimit: productLimit);
+        });
   }
 
   Stream<SalesSummary> watchSalesSummary({
@@ -245,7 +255,13 @@ class AnalyticsService {
   }) {
     return _salesService
         .getSalesStream(storeIds: storeIds, from: from, to: to)
-        .map((sales) => computeSalesSummary(sales, from, to));
+        .distinct()
+        .debounceTime(const Duration(milliseconds: 500))
+        .map((sales) => computeSalesSummary(sales, from, to))
+        .handleError((error) {
+          debugPrint('Sales summary stream error: $error');
+          return computeSalesSummary([], from, to);
+        });
   }
 
   Stream<List<ProductPerformance>> watchProductPerformance({
@@ -257,7 +273,13 @@ class AnalyticsService {
     final ids = storeId != null ? [storeId] : null;
     return _salesService
         .getSalesStream(storeIds: ids, from: from, to: to)
-        .map((sales) => computeProductPerformance(sales, from, to, limit: limit));
+        .distinct()
+        .debounceTime(const Duration(milliseconds: 500))
+        .map((sales) => computeProductPerformance(sales, from, to, limit: limit))
+        .handleError((error) {
+          debugPrint('Product performance stream error: $error');
+          return <ProductPerformance>[];
+        });
   }
 
   Stream<List<SalesTrend>> watchDailySalesTrend({
@@ -268,7 +290,13 @@ class AnalyticsService {
     final ids = storeId != null ? [storeId] : null;
     return _salesService
         .getSalesStream(storeIds: ids, from: from, to: to)
-        .map((sales) => computeDailySalesTrend(sales, storeId: storeId));
+        .distinct()
+        .debounceTime(const Duration(milliseconds: 500))
+        .map((sales) => computeDailySalesTrend(sales, storeId: storeId))
+        .handleError((error) {
+          debugPrint('Sales trend stream error: $error');
+          return <SalesTrend>[];
+        });
   }
 
   Stream<List<CustomerInsight>> watchCustomerInsights({
@@ -277,7 +305,13 @@ class AnalyticsService {
   }) {
     return _salesService
         .getSalesStream(from: from, to: to)
-        .map((sales) => computeCustomerInsights(sales));
+        .distinct()
+        .debounceTime(const Duration(milliseconds: 500))
+        .map((sales) => computeCustomerInsights(sales))
+        .handleError((error) {
+          debugPrint('Customer insights stream error: $error');
+          return <CustomerInsight>[];
+        });
   }
 
   // ── Backward-Compatible Async Methods ─────────────────────────────────────

@@ -92,41 +92,43 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
   Widget build(BuildContext context) {
     final store = context.watch<StoreProvider>().selectedStore;
     final storeId = store?.id;
-    final analyticsProvider = context.read<AnalyticsProvider>();
-    final range = DateTimeRange(start: _fromDate, end: _toDate);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      body: SafeArea(
-        child: StreamBuilder<AnalyticsBundle>(
-          stream: storeId != null
-              ? analyticsProvider.watchBundle(storeId: storeId, range: range)
-              : null,
-          builder: (context, snapshot) {
-            final bundle = snapshot.data;
-            if (bundle != null) {
-              _summary = bundle.summary;
-              _trend = bundle.trends;
-              _products = bundle.products;
-              _customers = bundle.customers;
-            }
-            final isWaitingFirst = snapshot.connectionState == ConnectionState.waiting &&
-                bundle == null &&
-                _summary == null;
+    return Consumer<AnalyticsProvider>(
+      builder: (context, analyticsProvider, child) {
+        final range = DateTimeRange(start: _fromDate, end: _toDate);
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Header
-                StoreHeaderWidget(
-                  title: 'Analytics Hub',
-                  subtitle: 'INTELLIGENCE CENTRE • Data-Driven Decisions',
-                  onNotificationTap: () =>
-                      context.go('/manager/notifications'),
-                ),
+        return Scaffold(
+          backgroundColor: const Color(0xFFF8FAFC),
+          body: SafeArea(
+            child: StreamBuilder<AnalyticsBundle>(
+              stream: storeId != null
+                  ? analyticsProvider.watchBundle(storeId: storeId, range: range)
+                  : null,
+              builder: (context, snapshot) {
+                final bundle = snapshot.data;
+                if (bundle != null) {
+                  _summary = bundle.summary;
+                  _trend = bundle.trends;
+                  _products = bundle.products;
+                  _customers = bundle.customers;
+                }
+                final isWaitingFirst = snapshot.connectionState == ConnectionState.waiting &&
+                    bundle == null &&
+                    _summary == null;
 
-                // Hero banner + period pills
-                _buildHeroBanner(isLive: bundle != null),
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Header
+                    StoreHeaderWidget(
+                      title: 'Analytics Hub',
+                      subtitle: 'INTELLIGENCE CENTRE • Data-Driven Decisions',
+                      onNotificationTap: () =>
+                          context.go('/manager/notifications'),
+                    ),
+
+                    // Hero banner + period pills
+                    _buildHeroBanner(isLive: bundle != null),
 
                 // Period pills
                 _buildPeriodPills(),
@@ -152,7 +154,9 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
             );
           },
         ),
-      ),
+            ),
+          );
+      },
     );
   }
 

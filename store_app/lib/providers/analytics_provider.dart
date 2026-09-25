@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:rxdart/rxdart.dart';
 import '../models/analytics_model.dart';
 import '../models/sale_model.dart';
 import '../services/analytics_service.dart';
@@ -15,8 +15,9 @@ class AnalyticsProvider extends ChangeNotifier {
     end: DateTime.now(),
   );
 
-  // Cached broadcast streams by cacheKey (e.g. "store123_Today")
-  final Map<String, Stream<AnalyticsBundle>> _bundleStreams = {};
+  // Cached BehaviorSubject streams by cacheKey for instant replay
+  final Map<String, BehaviorSubject<AnalyticsBundle>> _bundleSubjects = {};
+  final Map<String, StreamSubscription<AnalyticsBundle>> _bundleSubscriptions = {};
 
   DateTime _lastSyncTime = DateTime.now();
 
@@ -82,6 +83,7 @@ class AnalyticsProvider extends ChangeNotifier {
 
   /// Real-time stream of synchronized analytics data (KPIs, Products, Trends, Customers, Sales).
   /// Automatically updates on every new sale or transaction.
+  /// Uses BehaviorSubject for instant replay of last value to new subscribers.
   Stream<AnalyticsBundle> watchBundle({
     String? storeId,
     List<String>? storeIds,
@@ -92,20 +94,41 @@ class AnalyticsProvider extends ChangeNotifier {
     final endKey = effectiveRange.end.toIso8601String().substring(0, 10);
     final key = '${storeId ?? storeIds?.join(',') ?? "all"}_${startKey}_$endKey';
 
-    return _bundleStreams.putIfAbsent(key, () {
-      return _service
-          .watchAnalytics(
-            storeId: storeId,
-            storeIds: storeIds,
-            from: effectiveRange.start,
-            to: effectiveRange.end,
-          )
-          .map((bundle) {
+    // Return existing subject's stream if already set up
+    if (_bundleSubjects.containsKey(key)) {
+      return _bundleSubjects[key]!.stream.distinct();
+    }
+
+    // Create new BehaviorSubject
+    final subject = BehaviorSubject<AnalyticsBundle>();
+    _bundleSubjects[key] = subject;
+
+    // Subscribe to analytics service stream
+    final subscription = _service
+        .watchAnalytics(
+          storeId: storeId,
+          storeIds: storeIds,
+          from: effectiveRange.start,
+          to: effectiveRange.end,
+        )
+        .listen(
+          (bundle) {
             _lastSyncTime = DateTime.now();
-            return bundle;
-          })
-          .asBroadcastStream();
-    });
+            if (!subject.isClosed) {
+              subject.add(bundle);
+            }
+            notifyListeners();
+          },
+          onError: (error) {
+            debugPrint('Analytics bundle stream error ($key): $error');
+            // Don't close subject on error, keep it alive
+          },
+          cancelOnError: false,
+        );
+    
+    _bundleSubscriptions[key] = subscription;
+
+    return subject.stream.distinct();
   }
 
   /// Real-time stream of raw sales with date range
@@ -155,5 +178,20 @@ class AnalyticsProvider extends ChangeNotifier {
     return watchBundle(
       range: effectiveRange,
     ).map((b) => b.customers);
+  }
+
+  @override
+  void dispose() {
+    // Close all BehaviorSubjects
+    for (final subject in _bundleSubjects.values) {
+      subject.close();
+    }
+    // Cancel all subscriptions
+    for (final sub in _bundleSubscriptions.values) {
+      sub.cancel();
+    }
+    _bundleSubjects.clear();
+    _bundleSubscriptions.clear();
+    super.dispose();
   }
 }

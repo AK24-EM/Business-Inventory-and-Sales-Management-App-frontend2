@@ -23,8 +23,9 @@ class CustomerAnalyticsScreen extends StatefulWidget {
 class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final LoyaltyService _loyaltyService = LoyaltyService();
-  final CustomerService _customerService = CustomerService();
+  late LoyaltyService _loyaltyService;
+  late CustomerService _customerService;
+  bool _servicesInitialized = false;
   DateTime? _lastUpdateTime;
   
   String _selectedPeriod = 'Last 30 Days';
@@ -41,6 +42,16 @@ class _CustomerAnalyticsScreenState extends State<CustomerAnalyticsScreen>
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _lastUpdateTime = DateTime.now();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_servicesInitialized) {
+      _loyaltyService = context.read<LoyaltyService>();
+      _customerService = context.read<CustomerService>();
+      _servicesInitialized = true;
+    }
   }
 
   @override
