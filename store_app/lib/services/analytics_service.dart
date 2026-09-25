@@ -1,7 +1,5 @@
 import '../models/sale_model.dart';
-import '../models/inventory_model.dart';
 import '../models/analytics_model.dart';
-import '../models/customer_model.dart';
 import '../config/app_constants.dart';
 import 'sales_service.dart';
 import 'inventory_service.dart';
@@ -15,30 +13,17 @@ class AnalyticsService {
   AnalyticsService(
       this._salesService, this._inventoryService, this._customerService);
 
-  // ── Sales Summary ─────────────────────────────────────────────────────────
+  // ── Synchronous Compute Engines (Single Source of Truth) ──────────────────
 
-  Future<SalesSummary> getSalesSummary({
-    List<String>? storeIds,
-    required DateTime from,
-    required DateTime to,
-  }) async {
-    List<SaleModel> allSales = [];
-    if (storeIds != null) {
-      for (final storeId in storeIds) {
-        final s = await _salesService.getSalesByStore(storeId, from, to);
-        allSales.addAll(s);
-      }
-    } else {
-      allSales = await _salesService.getAllSales(from, to);
-    }
-
+  static SalesSummary computeSalesSummary(
+      List<SaleModel> sales, DateTime from, DateTime to) {
     double totalRevenue = 0;
     int totalItems = 0;
     final revenueByStore = <String, double>{};
     final revenueByCategory = <String, double>{};
     final revenueByPayment = <String, double>{};
 
-    for (final sale in allSales) {
+    for (final sale in sales) {
       totalRevenue += sale.totalAmount;
       totalItems += sale.itemCount;
       revenueByStore[sale.storeName] =
@@ -54,9 +39,9 @@ class AnalyticsService {
 
     return SalesSummary(
       totalRevenue: totalRevenue,
-      totalTransactions: allSales.length,
+      totalTransactions: sales.length,
       averageTransactionValue:
-          allSales.isEmpty ? 0 : totalRevenue / allSales.length,
+          sales.isEmpty ? 0 : totalRevenue / sales.length,
       totalItemsSold: totalItems,
       revenueByStore: revenueByStore,
       revenueByCategory: revenueByCategory,
@@ -66,23 +51,11 @@ class AnalyticsService {
     );
   }
 
-  // ── Product Performance ───────────────────────────────────────────────────
-
-  Future<List<ProductPerformance>> getProductPerformance({
-    String? storeId,
-    required DateTime from,
-    required DateTime to,
-    int limit = 20,
-  }) async {
-    List<SaleModel> sales;
-    if (storeId != null) {
-      sales = await _salesService.getSalesByStore(storeId, from, to);
-    } else {
-      sales = await _salesService.getAllSales(from, to);
-    }
-
+  static List<ProductPerformance> computeProductPerformance(
+      List<SaleModel> sales, DateTime from, DateTime to,
+      {int limit = 20}) {
     final Map<String, Map<String, dynamic>> productMap = {};
-    final daysInPeriod = to.difference(from).inDays + 1;
+    final daysInPeriod = (to.difference(from).inDays + 1).clamp(1, 99999);
     final daysWithSales = <String, Set<String>>{};
 
     for (final sale in sales) {
@@ -127,20 +100,8 @@ class AnalyticsService {
     return performances.take(limit).toList();
   }
 
-  // ── Sales Trend ───────────────────────────────────────────────────────────
-
-  Future<List<SalesTrend>> getDailySalesTrend({
-    String? storeId,
-    required DateTime from,
-    required DateTime to,
-  }) async {
-    List<SaleModel> sales;
-    if (storeId != null) {
-      sales = await _salesService.getSalesByStore(storeId, from, to);
-    } else {
-      sales = await _salesService.getAllSales(from, to);
-    }
-
+  static List<SalesTrend> computeDailySalesTrend(
+      List<SaleModel> sales, {String? storeId}) {
     final Map<String, SalesTrend> trendMap = {};
     for (final sale in sales) {
       final dateKey =
@@ -169,13 +130,7 @@ class AnalyticsService {
     return trends;
   }
 
-  // ── Customer Insights ─────────────────────────────────────────────────────
-
-  Future<List<CustomerInsight>> getCustomerInsights({
-    required DateTime from,
-    required DateTime to,
-  }) async {
-    final sales = await _salesService.getAllSales(from, to);
+  static List<CustomerInsight> computeCustomerInsights(List<SaleModel> sales) {
     final Map<String, Map<String, dynamic>> customerMap = {};
 
     for (final sale in sales) {
@@ -234,6 +189,151 @@ class AnalyticsService {
       );
     }).toList()
       ..sort((a, b) => b.totalSpend.compareTo(a.totalSpend));
+  }
+
+  static AnalyticsBundle computeAnalyticsBundle(
+    List<SaleModel> sales,
+    DateTime from,
+    DateTime to, {
+    String? storeId,
+    int productLimit = 20,
+  }) {
+    return AnalyticsBundle(
+      summary: computeSalesSummary(sales, from, to),
+      products: computeProductPerformance(sales, from, to, limit: productLimit),
+      trends: computeDailySalesTrend(sales, storeId: storeId),
+      customers: computeCustomerInsights(sales),
+      sales: sales,
+      lastUpdated: DateTime.now(),
+    );
+  }
+
+  // ── Real-Time Streams ─────────────────────────────────────────────────────
+
+  /// Single unified real-time stream that keeps summary, trends, products,
+  /// customers, and sales in 100% lock-step synchronization.
+  Stream<AnalyticsBundle> watchAnalytics({
+    List<String>? storeIds,
+    String? storeId,
+    required DateTime from,
+    required DateTime to,
+    int productLimit = 20,
+  }) {
+    final effectiveStoreIds = storeId != null
+        ? [storeId]
+        : (storeIds ?? const []);
+
+    return _salesService
+        .getSalesStream(
+          storeIds: effectiveStoreIds.isEmpty ? null : effectiveStoreIds,
+          from: from,
+          to: to,
+        )
+        .map((sales) => computeAnalyticsBundle(
+              sales,
+              from,
+              to,
+              storeId: storeId ?? (effectiveStoreIds.length == 1 ? effectiveStoreIds.first : null),
+              productLimit: productLimit,
+            ));
+  }
+
+  Stream<SalesSummary> watchSalesSummary({
+    List<String>? storeIds,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    return _salesService
+        .getSalesStream(storeIds: storeIds, from: from, to: to)
+        .map((sales) => computeSalesSummary(sales, from, to));
+  }
+
+  Stream<List<ProductPerformance>> watchProductPerformance({
+    String? storeId,
+    required DateTime from,
+    required DateTime to,
+    int limit = 20,
+  }) {
+    final ids = storeId != null ? [storeId] : null;
+    return _salesService
+        .getSalesStream(storeIds: ids, from: from, to: to)
+        .map((sales) => computeProductPerformance(sales, from, to, limit: limit));
+  }
+
+  Stream<List<SalesTrend>> watchDailySalesTrend({
+    String? storeId,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    final ids = storeId != null ? [storeId] : null;
+    return _salesService
+        .getSalesStream(storeIds: ids, from: from, to: to)
+        .map((sales) => computeDailySalesTrend(sales, storeId: storeId));
+  }
+
+  Stream<List<CustomerInsight>> watchCustomerInsights({
+    required DateTime from,
+    required DateTime to,
+  }) {
+    return _salesService
+        .getSalesStream(from: from, to: to)
+        .map((sales) => computeCustomerInsights(sales));
+  }
+
+  // ── Backward-Compatible Async Methods ─────────────────────────────────────
+
+  Future<SalesSummary> getSalesSummary({
+    List<String>? storeIds,
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    List<SaleModel> allSales = [];
+    if (storeIds != null && storeIds.isNotEmpty) {
+      for (final storeId in storeIds) {
+        final s = await _salesService.getSalesByStore(storeId, from, to);
+        allSales.addAll(s);
+      }
+    } else {
+      allSales = await _salesService.getAllSales(from, to);
+    }
+    return computeSalesSummary(allSales, from, to);
+  }
+
+  Future<List<ProductPerformance>> getProductPerformance({
+    String? storeId,
+    required DateTime from,
+    required DateTime to,
+    int limit = 20,
+  }) async {
+    List<SaleModel> sales;
+    if (storeId != null) {
+      sales = await _salesService.getSalesByStore(storeId, from, to);
+    } else {
+      sales = await _salesService.getAllSales(from, to);
+    }
+    return computeProductPerformance(sales, from, to, limit: limit);
+  }
+
+  Future<List<SalesTrend>> getDailySalesTrend({
+    String? storeId,
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    List<SaleModel> sales;
+    if (storeId != null) {
+      sales = await _salesService.getSalesByStore(storeId, from, to);
+    } else {
+      sales = await _salesService.getAllSales(from, to);
+    }
+    return computeDailySalesTrend(sales, storeId: storeId);
+  }
+
+  Future<List<CustomerInsight>> getCustomerInsights({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    final sales = await _salesService.getAllSales(from, to);
+    return computeCustomerInsights(sales);
   }
 
   // ── Product Associations (Market Basket) ─────────────────────────────────

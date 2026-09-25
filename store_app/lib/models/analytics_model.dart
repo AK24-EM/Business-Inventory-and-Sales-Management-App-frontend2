@@ -1,4 +1,48 @@
 // Analytics data models – computed summaries for dashboard and reports
+import 'package:flutter/material.dart';
+import 'sale_model.dart';
+
+class AnalyticsBundle {
+  final SalesSummary summary;
+  final List<ProductPerformance> products;
+  final List<SalesTrend> trends;
+  final List<CustomerInsight> customers;
+  final List<SaleModel> sales;
+  final DateTime lastUpdated;
+
+  const AnalyticsBundle({
+    required this.summary,
+    required this.products,
+    required this.trends,
+    required this.customers,
+    required this.sales,
+    required this.lastUpdated,
+  });
+
+  static AnalyticsBundle empty([DateTimeRange? range]) {
+    final now = DateTime.now();
+    final start = range?.start ?? now.subtract(const Duration(days: 30));
+    final end = range?.end ?? now;
+    return AnalyticsBundle(
+      summary: SalesSummary(
+        totalRevenue: 0,
+        totalTransactions: 0,
+        averageTransactionValue: 0,
+        totalItemsSold: 0,
+        revenueByStore: const {},
+        revenueByCategory: const {},
+        revenueByPaymentMode: const {},
+        periodStart: start,
+        periodEnd: end,
+      ),
+      products: const [],
+      trends: const [],
+      customers: const [],
+      sales: const [],
+      lastUpdated: now,
+    );
+  }
+}
 
 class SalesSummary {
   final double totalRevenue;

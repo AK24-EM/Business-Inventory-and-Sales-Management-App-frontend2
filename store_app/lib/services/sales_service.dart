@@ -16,6 +16,34 @@ class SalesService {
   CollectionReference<Map<String, dynamic>> get _sales =>
       _db.collection(AppConstants.salesCollection);
 
+  final Map<String, Stream<List<SaleModel>>> _storeSalesStreams = {};
+  Stream<List<SaleModel>>? _allSalesStream;
+
+  Stream<List<SaleModel>> _getRawStoreSalesStream(String storeId) {
+    return _storeSalesStreams.putIfAbsent(storeId, () {
+      return _sales
+          .where('storeId', isEqualTo: storeId)
+          .snapshots()
+          .map((snap) {
+            final list = snap.docs.map(SaleModel.fromFirestore).toList();
+            list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+            return list;
+          })
+          .asBroadcastStream();
+    });
+  }
+
+  Stream<List<SaleModel>> _getRawAllSalesStream() {
+    return _allSalesStream ??= _sales
+        .snapshots()
+        .map((snap) {
+          final list = snap.docs.map(SaleModel.fromFirestore).toList();
+          list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          return list;
+        })
+        .asBroadcastStream();
+  }
+
   Future<SaleModel> completeSale({
     required String storeId,
     required String storeName,
@@ -112,32 +140,51 @@ class SalesService {
     return sale;
   }
 
-  /// Real-time stream of sales for a specific store and date range
-  /// Sorted: newest sales FIRST (server-side)
+  /// Real-time stream of sales for a specific store and date range.
+  /// Reuses single store broadcast stream to prevent Firestore Web connection flapping.
   Stream<List<SaleModel>> getSalesByStoreStream(
       String storeId, DateTime from, DateTime to) {
-    return _sales
-        .where('storeId', isEqualTo: storeId)
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snap) {
-          return snap.docs
-              .map(SaleModel.fromFirestore)
-              .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
-              .toList();
-        });
+    return _getRawStoreSalesStream(storeId).map((list) {
+      return list
+          .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
+          .toList();
+    });
+  }
+
+  /// Real-time stream of all sales across all stores (or filtered by storeIds).
+  Stream<List<SaleModel>> getSalesStream({
+    List<String>? storeIds,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    if (storeIds != null && storeIds.length == 1) {
+      return getSalesByStoreStream(storeIds.first, from, to);
+    }
+    return _getRawAllSalesStream().map((list) {
+      return list.where((s) {
+        if (storeIds != null && storeIds.isNotEmpty && !storeIds.contains(s.storeId)) {
+          return false;
+        }
+        return !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to);
+      }).toList();
+    });
   }
 
   Future<List<SaleModel>> getSalesByStore(
       String storeId, DateTime from, DateTime to) async {
-    final snap = await _sales
-        .where('storeId', isEqualTo: storeId)
-        .orderBy('timestamp', descending: true)
-        .get();
-    return snap.docs
-        .map(SaleModel.fromFirestore)
-        .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
-        .toList();
+    try {
+      final snap = await _sales
+          .where('storeId', isEqualTo: storeId)
+          .get();
+      final list = snap.docs.map(SaleModel.fromFirestore).toList();
+      list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return list
+          .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
+          .toList();
+    } catch (e) {
+      debugPrint('getSalesByStore error: $e');
+      return [];
+    }
   }
 
   /// Efficient recent sales query using server-side date filter + limit.
@@ -159,14 +206,12 @@ class SalesService {
       try {
         final snap = await _sales
             .where('storeId', isEqualTo: storeId)
-            .orderBy('timestamp', descending: true)
             .limit(maxResults)
             .get();
         final from = DateTime.now().subtract(Duration(days: limitDays));
-        return snap.docs
-            .map(SaleModel.fromFirestore)
-            .where((s) => !s.timestamp.isBefore(from))
-            .toList();
+        final list = snap.docs.map(SaleModel.fromFirestore).toList();
+        list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        return list.where((s) => !s.timestamp.isBefore(from)).toList();
       } catch (e2) {
         debugPrint('getSalesByStoreRecent fallback also failed: $e2');
         return [];
@@ -175,25 +220,19 @@ class SalesService {
   }
 
   /// Real-time stream of all sales across all stores
-  /// Sorted: newest sales FIRST (server-side)
   Stream<List<SaleModel>> getAllSalesStream(DateTime from, DateTime to) {
-    return _sales
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snap) {
-          return snap.docs
-              .map(SaleModel.fromFirestore)
-              .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
-              .toList();
-        });
+    return _getRawAllSalesStream().map((list) {
+      return list
+          .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
+          .toList();
+    });
   }
 
   Future<List<SaleModel>> getAllSales(DateTime from, DateTime to) async {
-    final snap = await _sales
-        .orderBy('timestamp', descending: true)
-        .get();
-    return snap.docs
-        .map(SaleModel.fromFirestore)
+    final snap = await _sales.get();
+    final list = snap.docs.map(SaleModel.fromFirestore).toList();
+    list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return list
         .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
         .toList();
   }
@@ -201,42 +240,39 @@ class SalesService {
   Future<List<SaleModel>> getCustomerSales(String customerId) async {
     final snap = await _sales
         .where('customerId', isEqualTo: customerId)
-        .orderBy('timestamp', descending: true)
         .get();
-    return snap.docs.map(SaleModel.fromFirestore).toList();
+    final list = snap.docs.map(SaleModel.fromFirestore).toList();
+    list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return list;
   }
 
   Future<List<SaleModel>> getSalesByCustomerPhone(String phone) async {
     final snap = await _sales
         .where('customerPhone', isEqualTo: phone)
-        .orderBy('timestamp', descending: true)
         .get();
-    return snap.docs.map(SaleModel.fromFirestore).toList();
+    final list = snap.docs.map(SaleModel.fromFirestore).toList();
+    list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return list;
   }
 
   Stream<List<SaleModel>> getSalesByCustomerPhoneStream(String phone) {
     return _sales
         .where('customerPhone', isEqualTo: phone)
-        .orderBy('timestamp', descending: true)
         .snapshots()
-        .map((snap) => snap.docs.map(SaleModel.fromFirestore).toList());
+        .map((snap) {
+          final list = snap.docs.map(SaleModel.fromFirestore).toList();
+          list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          return list;
+        });
   }
 
   /// Real-time stream of today's sales for a store
-  /// Sorted: newest sales FIRST (server-side)
   Stream<List<SaleModel>> getTodaySalesStream(String storeId) {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, now.day);
-    return _sales
-        .where('storeId', isEqualTo: storeId)
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snap) {
-          return snap.docs
-              .map(SaleModel.fromFirestore)
-              .where((s) => !s.timestamp.isBefore(start))
-              .toList();
-        });
+    return _getRawStoreSalesStream(storeId).map((list) {
+      return list.where((s) => !s.timestamp.isBefore(start)).toList();
+    });
   }
 }
 

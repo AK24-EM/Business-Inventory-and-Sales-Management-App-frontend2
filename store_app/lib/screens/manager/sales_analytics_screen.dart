@@ -29,10 +29,6 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
   DateTime _fromDate = DateTime.now().subtract(const Duration(days: 6));
   DateTime _toDate = DateTime.now();
 
-  // Data
-  List<SaleModel> _sales = [];
-  bool _isLoading = false;
-  String? _error;
 
   @override
   void initState() {
@@ -42,44 +38,12 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
       context.read<InventoryService>(),
       context.read<CustomerService>(),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadData() async {
-    final storeId = context.read<StoreProvider>().selectedStore?.id;
-    if (storeId == null) return;
-
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      final sales = await _salesService.getSalesByStore(
-        storeId,
-        _fromDate,
-        _toDate,
-      );
-      if (mounted) {
-        setState(() {
-          _sales = sales;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
-    }
   }
 
   void _selectPeriod(String period) {
@@ -111,15 +75,48 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
           break;
       }
     });
-    _loadData();
   }
 
   @override
   Widget build(BuildContext context) {
+    final storeId = context.watch<StoreProvider>().selectedStore?.id ?? '';
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Sales Analytics'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 14),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF10B981), width: 0.8),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.bolt_rounded, size: 12, color: Color(0xFF10B981)),
+                    SizedBox(width: 3),
+                    Text(
+                      'LIVE SYNC',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF10B981),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
@@ -131,34 +128,60 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
           ],
         ),
       ),
-      body: Column(
-        children: [
-          _PeriodSelector(
-            selected: _selectedPeriod,
-            onSelect: _selectPeriod,
-          ),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? _ErrorView(error: _error!, onRetry: _loadData)
-                    : _sales.isEmpty
+      body: StreamBuilder<List<SaleModel>>(
+        stream: storeId.isNotEmpty
+            ? _salesService.getSalesByStoreStream(storeId, _fromDate, _toDate)
+            : null,
+        builder: (context, snapshot) {
+          if (snapshot.hasError && snapshot.data == null) {
+            return Column(
+              children: [
+                _PeriodSelector(
+                  selected: _selectedPeriod,
+                  onSelect: _selectPeriod,
+                ),
+                Expanded(
+                  child: _ErrorView(
+                    error: snapshot.error.toString(),
+                    onRetry: () => setState(() {}),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          final sales = snapshot.data ?? const [];
+          final isWaiting = snapshot.connectionState == ConnectionState.waiting &&
+              snapshot.data == null;
+
+          return Column(
+            children: [
+              _PeriodSelector(
+                selected: _selectedPeriod,
+                onSelect: _selectPeriod,
+              ),
+              Expanded(
+                child: isWaiting
+                    ? const Center(child: CircularProgressIndicator())
+                    : sales.isEmpty
                         ? const _EmptyView()
                         : TabBarView(
                             controller: _tabController,
                             children: [
-                              _OverviewTab(sales: _sales),
+                              _OverviewTab(sales: sales),
                               _TrendsTab(
-                                sales: _sales,
+                                sales: sales,
                                 fromDate: _fromDate,
                                 toDate: _toDate,
                               ),
-                              _ProductsTab(sales: _sales),
-                              _TimeAnalysisTab(sales: _sales),
+                              _ProductsTab(sales: sales),
+                              _TimeAnalysisTab(sales: sales),
                             ],
                           ),
-          ),
-        ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -377,7 +400,7 @@ class _MetricCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(icon, color: color, size: 16),
@@ -563,11 +586,15 @@ class _LegendItem extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                Text(
-                  '$count txns • ${fmt.format(amount)}',
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: AppColors.textSecondary,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '$count txns • ${fmt.format(amount)}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
               ],
@@ -676,7 +703,7 @@ class _RevenueLineChart extends StatelessWidget {
             drawVerticalLine: false,
             horizontalInterval: maxRevenue / 5,
             getDrawingHorizontalLine: (value) {
-              return FlLine(
+              return const FlLine(
                 color: AppColors.border,
                 strokeWidth: 1,
               );
@@ -739,7 +766,7 @@ class _RevenueLineChart extends StatelessWidget {
               dotData: const FlDotData(show: true),
               belowBarData: BarAreaData(
                 show: true,
-                color: AppColors.secondary.withOpacity(0.1),
+                color: AppColors.secondary.withValues(alpha: 0.1),
               ),
             ),
           ],
@@ -783,7 +810,7 @@ class _TransactionBarChart extends StatelessWidget {
             drawVerticalLine: false,
             horizontalInterval: (maxTransactions / 5).ceilToDouble(),
             getDrawingHorizontalLine: (value) {
-              return FlLine(
+              return const FlLine(
                 color: AppColors.border,
                 strokeWidth: 1,
               );
@@ -961,7 +988,7 @@ class _ProductRankCard extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: getRankColor().withOpacity(0.15),
+              color: getRankColor().withValues(alpha: 0.15),
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
@@ -1152,7 +1179,7 @@ class _HourlyBarChart extends StatelessWidget {
             drawVerticalLine: false,
             horizontalInterval: (maxSales / 5).ceilToDouble(),
             getDrawingHorizontalLine: (value) {
-              return FlLine(
+              return const FlLine(
                 color: AppColors.border,
                 strokeWidth: 1,
               );
@@ -1237,9 +1264,9 @@ class _ErrorView extends StatelessWidget {
           children: [
             const Icon(Icons.error_outline, size: 64, color: AppColors.error),
             const SizedBox(height: 16),
-            Text(
+            const Text(
               'Error loading data',
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'Poppins',
                 fontSize: 16,
                 fontWeight: FontWeight.w600,

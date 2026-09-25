@@ -4,10 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../widgets/store_header_widget.dart';
 import '../../providers/store_provider.dart';
-import '../../services/sales_service.dart';
-import '../../services/inventory_service.dart';
-import '../../services/customer_service.dart';
-import '../../services/analytics_service.dart';
+import '../../providers/analytics_provider.dart';
 import '../../models/analytics_model.dart';
 
 /// Modern, enterprise-grade Store Manager Reports & Analytics screen.
@@ -24,9 +21,8 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
   String _selectedPeriod = 'Today';
-  bool _loading = false;
   SalesSummary? _summary;
-  List<ProductPerformance> _performance = [];
+  final List<ProductPerformance> _performance = [];
 
   final List<String> _periodOptions = const [
     'Today',
@@ -40,7 +36,6 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
   void initState() {
     super.initState();
     _tabs = TabController(length: 3, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
   }
 
   @override
@@ -81,50 +76,40 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
     }
   }
 
-  Future<void> _loadData() async {
-    final storeId = context.read<StoreProvider>().selectedStore?.id ?? '';
-    if (storeId.isEmpty) return;
-    setState(() => _loading = true);
-    final range = _getRange();
-    final analyticsService = AnalyticsService(
-      SalesService(InventoryService(), CustomerService()),
-      InventoryService(),
-      CustomerService(),
-    );
-    try {
-      _summary = await analyticsService.getSalesSummary(
-        storeIds: [storeId],
-        from: range.start,
-        to: range.end,
-      );
-      _performance = await analyticsService.getProductPerformance(
-        storeId: storeId,
-        from: range.start,
-        to: range.end,
-      );
-    } catch (_) {}
-    if (mounted) setState(() => _loading = false);
-  }
-
   @override
   Widget build(BuildContext context) {
+    final store = context.watch<StoreProvider>().selectedStore;
+    final storeId = store?.id ?? '';
+    final analyticsProvider = context.read<AnalyticsProvider>();
+    final range = _getRange();
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 1. Top Enterprise Store Header
-            const StoreHeaderWidget(
-              title: 'Business Analytics & Reports',
-              subtitle: 'EXECUTIVE INTELLIGENCE • Downtown Hub',
-            ),
+        child: StreamBuilder<AnalyticsBundle>(
+          stream: storeId.isNotEmpty
+              ? analyticsProvider.watchBundle(storeId: storeId, range: range)
+              : null,
+          builder: (context, snapshot) {
+            final bundle = snapshot.data;
+            final currentSummary = bundle?.summary ?? _summary;
+            final currentPerformance = bundle?.products ?? _performance;
+            final isWaitingFirst = snapshot.connectionState == ConnectionState.waiting && bundle == null && _summary == null;
 
-            // 1b. Blue Gradient Analytics Banner
-            _buildReportsBanner(),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 1. Top Enterprise Store Header
+                const StoreHeaderWidget(
+                  title: 'Business Analytics & Reports',
+                  subtitle: 'EXECUTIVE INTELLIGENCE • Downtown Hub',
+                ),
 
-            // 2. Filter & Tabs Bar
-            Container(
+                // 1b. Blue Gradient Analytics Banner
+                _buildReportsBanner(currentSummary, isLive: bundle != null),
+
+                // 2. Filter & Tabs Bar
+                Container(
               color: Colors.white,
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Column(
@@ -142,7 +127,6 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
                         return InkWell(
                           onTap: () {
                             setState(() => _selectedPeriod = period);
-                            _loadData();
                           },
                           borderRadius: BorderRadius.circular(20),
                           child: Container(
@@ -220,37 +204,35 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
               ),
             ),
 
-            // 3. Tab Body
-            Expanded(
-              child: _loading
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF2563EB),
-                      ),
-                    )
-                  : TabBarView(
-                      controller: _tabs,
-                      children: [
-                        _SalesTab(summary: _summary),
-                        _ProductsTab(performance: _performance),
-                        _InventoryTab(
-                          storeId: context
-                                  .watch<StoreProvider>()
-                                  .selectedStore
-                                  ?.id ??
-                              '',
+                // 3. Tab Body
+                Expanded(
+                  child: isWaitingFirst
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF2563EB),
+                          ),
+                        )
+                      : TabBarView(
+                          controller: _tabs,
+                          children: [
+                            _SalesTab(summary: currentSummary),
+                            _ProductsTab(performance: currentPerformance),
+                            _InventoryTab(
+                              storeId: storeId,
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-            ),
-          ],
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
   // ── Blue Gradient Analytics Banner ──
-  Widget _buildReportsBanner() {
+  Widget _buildReportsBanner(SalesSummary? summary, {bool isLive = false}) {
     final now = DateTime.now();
     final hour = now.hour;
     final greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -292,9 +274,41 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Business Intelligence',
-                      style: TextStyle(fontFamily: 'Poppins', fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
+                    Row(
+                      children: [
+                        const Text(
+                          'Business Intelligence',
+                          style: TextStyle(fontFamily: 'Poppins', fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
+                        ),
+                        if (isLive) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF10B981).withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFF34D399), width: 0.8),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.bolt_rounded, size: 10, color: Color(0xFF34D399)),
+                                SizedBox(width: 2),
+                                Text(
+                                  'LIVE SYNC',
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF34D399),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
                       '$greeting  •  $_selectedPeriod  •  $dateStr',
@@ -335,21 +349,21 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
               children: [
                 _bannerStat(
                   'Revenue',
-                  '₹${NumberFormat('#,##,###').format((_summary?.totalRevenue ?? 0).round())}',
+                  '₹${NumberFormat('#,##,###').format((summary?.totalRevenue ?? 0).round())}',
                   Icons.trending_up_rounded,
                   const Color(0xFF6EE7B7),
                 ),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
                 _bannerStat(
                   'Transactions',
-                  '${_summary?.totalTransactions ?? 0} Bills',
+                  '${summary?.totalTransactions ?? 0} Bills',
                   Icons.receipt_rounded,
                   const Color(0xFF93C5FD),
                 ),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
                 _bannerStat(
                   'Avg Basket',
-                  '₹${NumberFormat('#,##,###').format((_summary?.averageTransactionValue ?? 0).round())}',
+                  '₹${NumberFormat('#,##,###').format((summary?.averageTransactionValue ?? 0).round())}',
                   Icons.shopping_bag_rounded,
                   const Color(0xFFFDE68A),
                 ),

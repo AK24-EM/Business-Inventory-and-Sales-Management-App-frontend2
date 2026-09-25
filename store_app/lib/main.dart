@@ -13,6 +13,7 @@ import 'providers/sales_provider.dart';
 import 'providers/product_provider.dart';
 import 'providers/loyalty_provider.dart';
 import 'providers/supplier_provider.dart';
+import 'providers/analytics_provider.dart';
 import 'routing/app_router.dart';
 import 'services/auth_service.dart';
 import 'services/inventory_service.dart';
@@ -22,41 +23,43 @@ import 'services/loyalty_service.dart';
 import 'services/billing_service.dart';
 import 'services/supplier_service.dart';
 import 'services/notification_service.dart';
+import 'services/analytics_service.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  // IMPORTANT: runZonedGuarded must wrap EVERYTHING including ensureInitialized
+  // so that the binding, Firebase init, and runApp all share the same zone.
+  // Previously ensureInitialized() ran in the root zone while runApp() ran in
+  // the guarded zone — causing "FlutterError: Zone mismatch".
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // ─── Firestore Web: Force HTTP long-polling transport ─────────────────────
-  // Firebase JS SDK 11.x has a known internal assertion bug in its WebSocket
-  // (gRPC-Web) WatchChangeAggregator that causes "Unexpected state (ID: b815 /
-  // ca9)" when onSnapshot listeners and write operations run concurrently.
-  // Switching to experimentalForceLongPolling avoids the WebSocket code path
-  // entirely and eliminates the assertion failure.
-  // See: https://github.com/firebase/firebase-js-sdk/issues/8592
-  if (kIsWeb) {
-    FirebaseFirestore.instance.settings = const Settings(
-      persistenceEnabled: false,
-      sslEnabled: true,
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
     );
-  }
-  // ──────────────────────────────────────────────────────────────────────────
 
-  // Initialize notification service
-  final notificationService = NotificationService();
-  await notificationService.initialize();
+    // ─── Firestore Web: Disable offline persistence ────────────────────────
+    // Offline persistence is not supported on web without IndexedDB multi-tab
+    // configuration. Disabling it prevents the b815/ca9 WatchChangeAggregator
+    // assertion crash in Firebase JS SDK 11.x on WebSocket reconnects.
+    if (kIsWeb) {
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: false,
+        sslEnabled: true,
+      );
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
-  FlutterError.onError = (details) {
-    debugPrint('FlutterError: ${details.exception}');
-  };
+    FlutterError.onError = (details) {
+      debugPrint('FlutterError: ${details.exception}');
+    };
 
-  runZonedGuarded(() {
+    // Initialize notification service
+    final notificationService = NotificationService();
+    await notificationService.initialize();
+
     runApp(StoreIQApp(notificationService: notificationService));
   }, (error, stack) {
-    debugPrint('Uncaught: $error');
+    debugPrint('Uncaught: $error\n$stack');
   });
 }
 
@@ -80,6 +83,9 @@ class StoreIQApp extends StatelessWidget {
         ProxyProvider2<InventoryService, CustomerService, SalesService>(
           update: (_, inv, cust, __) => SalesService(inv, cust),
         ),
+        ProxyProvider3<SalesService, InventoryService, CustomerService, AnalyticsService>(
+          update: (_, sales, inv, cust, __) => AnalyticsService(sales, inv, cust),
+        ),
 
         // State providers
         ChangeNotifierProxyProvider<AuthService, AuthProvider>(
@@ -96,6 +102,10 @@ class StoreIQApp extends StatelessWidget {
         ChangeNotifierProxyProvider<SalesService, SalesProvider>(
           create: (ctx) => SalesProvider(ctx.read<SalesService>()),
           update: (ctx, svc, prev) => prev ?? SalesProvider(svc),
+        ),
+        ChangeNotifierProxyProvider<AnalyticsService, AnalyticsProvider>(
+          create: (ctx) => AnalyticsProvider(ctx.read<AnalyticsService>()),
+          update: (ctx, svc, prev) => prev ?? AnalyticsProvider(svc),
         ),
         ChangeNotifierProvider<ProductProvider>(
           create: (_) => ProductProvider(),

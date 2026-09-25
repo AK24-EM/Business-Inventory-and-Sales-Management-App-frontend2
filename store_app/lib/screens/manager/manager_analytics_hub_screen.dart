@@ -6,10 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../widgets/store_header_widget.dart';
 import '../../providers/store_provider.dart';
-import '../../services/analytics_service.dart';
-import '../../services/sales_service.dart';
-import '../../services/inventory_service.dart';
-import '../../services/customer_service.dart';
+import '../../providers/analytics_provider.dart';
 import '../../models/analytics_model.dart';
 
 /// Premium Manager Analytics Hub
@@ -26,14 +23,12 @@ class ManagerAnalyticsHubScreen extends StatefulWidget {
 class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  late AnalyticsService _analytics;
 
   String _selectedPeriod = 'Last 30 Days';
   DateTime _fromDate = DateTime.now().subtract(const Duration(days: 29));
   DateTime _toDate = DateTime.now();
 
   // Loaded data
-  bool _loading = false;
   SalesSummary? _summary;
   List<SalesTrend> _trend = [];
   List<ProductPerformance> _products = [];
@@ -56,12 +51,6 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _analytics = AnalyticsService(
-      SalesService(InventoryService(), CustomerService()),
-      InventoryService(),
-      CustomerService(),
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
   }
 
   @override
@@ -97,77 +86,71 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
       _fromDate = from;
       _toDate = now;
     });
-    _loadData();
-  }
-
-  Future<void> _loadData() async {
-    final storeId = context.read<StoreProvider>().selectedStore?.id;
-    if (storeId == null) return;
-    setState(() => _loading = true);
-    try {
-      final results = await Future.wait([
-        _analytics.getSalesSummary(
-            storeIds: [storeId], from: _fromDate, to: _toDate),
-        _analytics.getDailySalesTrend(
-            storeId: storeId, from: _fromDate, to: _toDate),
-        _analytics.getProductPerformance(
-            storeId: storeId, from: _fromDate, to: _toDate, limit: 15),
-        _analytics.getCustomerInsights(from: _fromDate, to: _toDate),
-      ]);
-      if (mounted) {
-        setState(() {
-          _summary = results[0] as SalesSummary;
-          _trend = results[1] as List<SalesTrend>;
-          _products = results[2] as List<ProductPerformance>;
-          _customers = results[3] as List<CustomerInsight>;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _loading = false);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final store = context.watch<StoreProvider>().selectedStore;
+    final storeId = store?.id;
+    final analyticsProvider = context.read<AnalyticsProvider>();
+    final range = DateTimeRange(start: _fromDate, end: _toDate);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header
-            StoreHeaderWidget(
-              title: 'Analytics Hub',
-              subtitle: 'INTELLIGENCE CENTRE • Data-Driven Decisions',
-              onNotificationTap: () =>
-                  context.go('/manager/notifications'),
-            ),
+        child: StreamBuilder<AnalyticsBundle>(
+          stream: storeId != null
+              ? analyticsProvider.watchBundle(storeId: storeId, range: range)
+              : null,
+          builder: (context, snapshot) {
+            final bundle = snapshot.data;
+            if (bundle != null) {
+              _summary = bundle.summary;
+              _trend = bundle.trends;
+              _products = bundle.products;
+              _customers = bundle.customers;
+            }
+            final isWaitingFirst = snapshot.connectionState == ConnectionState.waiting &&
+                bundle == null &&
+                _summary == null;
 
-            // Hero banner + period pills
-            _buildHeroBanner(),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header
+                StoreHeaderWidget(
+                  title: 'Analytics Hub',
+                  subtitle: 'INTELLIGENCE CENTRE • Data-Driven Decisions',
+                  onNotificationTap: () =>
+                      context.go('/manager/notifications'),
+                ),
 
-            // Period pills
-            _buildPeriodPills(),
+                // Hero banner + period pills
+                _buildHeroBanner(isLive: bundle != null),
 
-            // TabBar
-            _buildTabBar(),
+                // Period pills
+                _buildPeriodPills(),
 
-            // Content
-            Expanded(
-              child: _loading
-                  ? _buildLoadingState()
-                  : TabBarView(
-                      controller: _tabController,
-                      children: [
-                        _buildOverviewTab(),
-                        _buildTrendTab(),
-                        _buildProductsTab(),
-                        _buildCustomersTab(),
-                      ],
-                    ),
-            ),
-          ],
+                // TabBar
+                _buildTabBar(),
+
+                // Content
+                Expanded(
+                  child: isWaitingFirst
+                      ? _buildLoadingState()
+                      : TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildOverviewTab(),
+                            _buildTrendTab(),
+                            _buildProductsTab(),
+                            _buildCustomersTab(),
+                          ],
+                        ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -177,7 +160,7 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
   // HERO BANNER
   // ──────────────────────────────────────────────────────────────────────────
 
-  Widget _buildHeroBanner() {
+  Widget _buildHeroBanner({bool isLive = false}) {
     final revenue = _summary?.totalRevenue ?? 0;
     final txns = _summary?.totalTransactions ?? 0;
     final avg = _summary?.averageTransactionValue ?? 0;
@@ -219,13 +202,45 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Analytics Intelligence',
-                      style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white),
+                    Row(
+                      children: [
+                        const Text(
+                          'Analytics Intelligence',
+                          style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white),
+                        ),
+                        if (isLive) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF10B981).withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFF34D399), width: 0.8),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.bolt_rounded, size: 10, color: Color(0xFF34D399)),
+                                SizedBox(width: 2),
+                                Text(
+                                  'LIVE SYNC',
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF34D399),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
                       _selectedPeriod,
@@ -238,7 +253,11 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
                 ),
               ),
               InkWell(
-                onTap: _loadData,
+                onTap: () {
+                  setState(() {
+                    _toDate = DateTime.now();
+                  });
+                },
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   padding: const EdgeInsets.all(8),
@@ -296,22 +315,29 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
 
   Widget _heroBannerStat(
       String value, String label, IconData icon, Color iconColor) {
-    return Column(
-      children: [
-        Icon(icon, size: 13, color: iconColor),
-        const SizedBox(height: 3),
-        Text(value,
-            style: const TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: Colors.white)),
-        Text(label,
-            style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 9,
-                color: Colors.white.withValues(alpha: 0.75))),
-      ],
+    return Flexible(
+      child: Column(
+        children: [
+          Icon(icon, size: 13, color: iconColor),
+          const SizedBox(height: 3),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(value,
+                style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white)),
+          ),
+          Text(label,
+              style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 9,
+                  color: Colors.white.withValues(alpha: 0.75)),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis),
+        ],
+      ),
     );
   }
 
@@ -895,8 +921,8 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
                       gridData: FlGridData(
                         show: true,
                         drawVerticalLine: false,
-                        getDrawingHorizontalLine: (_) => FlLine(
-                          color: const Color(0xFFF1F5F9),
+                        getDrawingHorizontalLine: (_) => const FlLine(
+                          color: Color(0xFFF1F5F9),
                           strokeWidth: 1,
                         ),
                       ),
@@ -908,8 +934,11 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
                             reservedSize: 52,
                             getTitlesWidget: (val, meta) {
                               if (val == 0) return const Text('');
+                              final label = val >= 1000
+                                  ? '₹${_fmt.format(val ~/ 1000)}K'
+                                  : '₹${val.toInt()}';
                               return Text(
-                                '₹${_fmt.format(val ~/ 1000)}K',
+                                label,
                                 style: const TextStyle(
                                     fontFamily: 'Poppins',
                                     fontSize: 9,
@@ -1101,11 +1130,11 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  const Icon(Icons.bar_chart_rounded,
+                const Row(children: [
+                  Icon(Icons.bar_chart_rounded,
                       color: Color(0xFF7C3AED), size: 18),
-                  const SizedBox(width: 8),
-                  const Text('Top Products by Units Sold',
+                  SizedBox(width: 8),
+                  Text('Top Products by Units Sold',
                       style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 13,
@@ -1121,8 +1150,8 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
                       gridData: FlGridData(
                         show: true,
                         drawVerticalLine: false,
-                        getDrawingHorizontalLine: (_) => FlLine(
-                            color: const Color(0xFFF1F5F9), strokeWidth: 1),
+                        getDrawingHorizontalLine: (_) => const FlLine(
+                            color: Color(0xFFF1F5F9), strokeWidth: 1),
                       ),
                       borderData: FlBorderData(show: false),
                       titlesData: FlTitlesData(
@@ -1488,11 +1517,11 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [
-                  const Icon(Icons.military_tech_rounded,
+                const Row(children: [
+                  Icon(Icons.military_tech_rounded,
                       color: Color(0xFFF59E0B), size: 18),
-                  const SizedBox(width: 8),
-                  const Text('Top 5 Customers by Spend',
+                  SizedBox(width: 8),
+                  Text('Top 5 Customers by Spend',
                       style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 12.5,
@@ -1695,7 +1724,7 @@ class _ManagerAnalyticsHubScreenState extends State<ManagerAnalyticsHubScreen>
           ),
           const SizedBox(height: 20),
           OutlinedButton.icon(
-            onPressed: _loadData,
+            onPressed: () => setState(() => _toDate = DateTime.now()),
             icon: const Icon(Icons.refresh_rounded, size: 16),
             label: const Text('Retry'),
             style: OutlinedButton.styleFrom(

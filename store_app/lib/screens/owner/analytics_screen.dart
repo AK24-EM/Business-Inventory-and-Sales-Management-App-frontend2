@@ -4,10 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../config/app_theme.dart';
 import '../../providers/store_provider.dart';
-import '../../services/sales_service.dart';
-import '../../services/inventory_service.dart';
-import '../../services/customer_service.dart';
-import '../../services/analytics_service.dart';
+import '../../providers/analytics_provider.dart';
 import '../../models/analytics_model.dart';
 import '../../widgets/store_header_widget.dart';
 
@@ -25,14 +22,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   List<ProductPerformance> _topProducts = [];
   List<SalesTrend> _trends = [];
   List<CustomerInsight> _customers = [];
-  bool _loading = true;
   String _period = 'Last 30 Days';
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 4, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   @override
@@ -61,70 +56,69 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             start: now.subtract(const Duration(days: 30)), end: now);
     }
   }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final stores = context.read<StoreProvider>().stores;
-    final range = _getRange();
-    final svc = AnalyticsService(
-      SalesService(InventoryService(), CustomerService()),
-      InventoryService(),
-      CustomerService(),
-    );
-    final storeIds = stores.map((s) => s.id).toList();
-    _summary = await svc.getSalesSummary(
-        storeIds: storeIds, from: range.start, to: range.end);
-    _topProducts = await svc.getProductPerformance(
-        from: range.start, to: range.end);
-    _trends = await svc.getDailySalesTrend(
-        from: range.start, to: range.end);
-    _customers = await svc.getCustomerInsights(
-        from: range.start, to: range.end);
-    if (mounted) setState(() => _loading = false);
-  }
-
   @override
   Widget build(BuildContext context) {
+    final stores = context.watch<StoreProvider>().stores;
+    final storeIds = stores.map((s) => s.id).toList();
+    final analyticsProvider = context.read<AnalyticsProvider>();
+    final range = _getRange();
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 1. Enterprise Top Header
-            const StoreHeaderWidget(
-              title: 'Business Analytics',
-              subtitle: 'ENTERPRISE INTELLIGENCE • Downtown Hub',
-            ),
+        child: StreamBuilder<AnalyticsBundle>(
+          stream: analyticsProvider.watchBundle(storeIds: storeIds, range: range),
+          builder: (context, snapshot) {
+            final bundle = snapshot.data;
+            if (bundle != null) {
+              _summary = bundle.summary;
+              _topProducts = bundle.products;
+              _trends = bundle.trends;
+              _customers = bundle.customers;
+            }
+            final isWaitingFirst = snapshot.connectionState == ConnectionState.waiting &&
+                bundle == null &&
+                _summary == null;
 
-            // 2. Sapphire Revenue Analytics Hero Banner
-            _buildAnalyticsHeroBanner(),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 1. Enterprise Top Header
+                const StoreHeaderWidget(
+                  title: 'Business Analytics',
+                  subtitle: 'ENTERPRISE INTELLIGENCE • Downtown Hub',
+                ),
 
-            // 3. Segmented Tab Bar + Period Selector
-            _buildTabBarAndPeriodRow(),
+                // 2. Sapphire Revenue Analytics Hero Banner
+                _buildAnalyticsHeroBanner(isLive: bundle != null),
 
-            // 4. Tab Content
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : TabBarView(
-                      controller: _tabs,
-                      children: [
-                        _SalesAnalyticsTab(summary: _summary),
-                        _ProductsAnalyticsTab(products: _topProducts),
-                        _TrendsTab(trends: _trends),
-                        _CustomersTab(customers: _customers),
-                      ],
-                    ),
-            ),
-          ],
+                // 3. Segmented Tab Bar + Period Selector
+                _buildTabBarAndPeriodRow(),
+
+                // 4. Tab Content
+                Expanded(
+                  child: isWaitingFirst
+                      ? const Center(child: CircularProgressIndicator())
+                      : TabBarView(
+                          controller: _tabs,
+                          children: [
+                            _SalesAnalyticsTab(summary: _summary),
+                            _ProductsAnalyticsTab(products: _topProducts),
+                            _TrendsTab(trends: _trends),
+                            _CustomersTab(customers: _customers),
+                          ],
+                        ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
   // ── Sapphire Revenue Analytics Banner ──
-  Widget _buildAnalyticsHeroBanner() {
+  Widget _buildAnalyticsHeroBanner({bool isLive = false}) {
     final fmt = NumberFormat('#,##,##0.00', 'en_IN');
     final revenue = _summary?.totalRevenue ?? 132142.0;
     final transactions = _summary?.totalTransactions ?? 267;
@@ -142,7 +136,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF2563EB).withValues(alpha: 0.28),
+            color: const Color(0xFF2563EB).withValues(alpha: 0.26),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -166,14 +160,46 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Revenue & Growth Audit',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
+                    Row(
+                      children: [
+                        const Text(
+                          'Revenue & Growth Audit',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        if (isLive) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF10B981).withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFF34D399), width: 0.8),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.bolt_rounded, size: 10, color: Color(0xFF34D399)),
+                                SizedBox(width: 2),
+                                Text(
+                                  'LIVE SYNC',
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF34D399),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     Text(
                       '$_period • Multi-Store Performance',
@@ -213,7 +239,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 initialValue: _period,
                 onSelected: (v) {
                   setState(() => _period = v);
-                  _load();
                 },
                 itemBuilder: (_) => [
                   'Today',
@@ -249,28 +274,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   }
 
   Widget _analyticsBannerStat(String label, String value, IconData icon, Color color) {
-    return Column(
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            fontFamily: 'Poppins',
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
+    return Flexible(
+      child: Column(
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
           ),
-        ),
-        Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'Poppins',
-            fontSize: 9.5,
-            color: Colors.white.withValues(alpha: 0.75),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 9.5,
+              color: Colors.white.withValues(alpha: 0.75),
+            ),
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -445,9 +477,13 @@ class _SalesAnalyticsTab extends StatelessWidget {
                       mainAxisAlignment:
                           MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(e.key,
-                            style: const TextStyle(
-                                fontFamily: 'Poppins', fontSize: 12)),
+                        Flexible(
+                          child: Text(e.key,
+                              style: const TextStyle(
+                                  fontFamily: 'Poppins', fontSize: 12),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                        const SizedBox(width: 8),
                         Text(
                             '₹${fmt.format(e.value)} (${(pct * 100).toStringAsFixed(1)}%)',
                             style: const TextStyle(
