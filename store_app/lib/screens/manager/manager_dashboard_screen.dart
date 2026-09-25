@@ -14,7 +14,6 @@ import '../../models/sale_model.dart';
 import '../../models/inventory_model.dart';
 import '../../models/purchase_order_model.dart';
 import '../../services/purchase_order_service.dart';
-import '../../services/inventory_service.dart';
 
 /// Modern, enterprise-ready Store Manager Dashboard.
 /// Matches the employee-side UI design: blue gradient banner, segmented tabs,
@@ -681,9 +680,10 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   }
 
   Widget _buildInboundDeliveryCard(String storeId, UserModel? user) {
-    final inventoryService = context.read<InventoryService>();
-    return StreamBuilder<List<StockTransfer>>(
-      stream: inventoryService.getPendingTransfersStream(storeId),
+    return Consumer<InventoryProvider>(
+      builder: (context, inventoryProvider, child) {
+        return StreamBuilder<List<StockTransfer>>(
+          stream: inventoryProvider.watchPendingTransfers(storeId),
       builder: (context, snapshot) {
         final pendingTransfers = snapshot.data ?? [];
         if (pendingTransfers.isEmpty) {
@@ -825,10 +825,10 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                     ElevatedButton.icon(
                       onPressed: () async {
                         try {
-                          await inventoryService.confirmTransfer(
+                          await inventoryProvider.confirmTransfer(
                             transferId: transfer.id,
-                            confirmedByUserId: user?.id ?? 'manager',
-                            confirmedByUserName: user?.name ?? 'Store Manager',
+                            userId: user?.id ?? 'manager',
+                            userName: user?.name ?? 'Store Manager',
                           );
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -870,6 +870,8 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
             ],
           ),
         );
+      },
+    );
       },
     );
   }
@@ -1215,8 +1217,9 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   }
 
   Widget _buildPendingApprovalsSection(String storeId, UserModel? user) {
+    final purchaseOrderService = context.read<PurchaseOrderService>();
     return StreamBuilder<List<PurchaseOrderModel>>(
-      stream: PurchaseOrderService().watchPurchaseOrdersByStatus(storeId, POStatus.submitted),
+      stream: purchaseOrderService.watchPurchaseOrdersByStatus(storeId, POStatus.submitted),
       builder: (context, snapshot) {
         final pendingPOs = snapshot.data ?? [];
 
@@ -1422,7 +1425,7 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
                             child: ElevatedButton(
                               onPressed: () async {
                                 try {
-                                  await PurchaseOrderService().approvePurchaseOrder(
+                                  await purchaseOrderService.approvePurchaseOrder(
                                     po.id,
                                     user?.name ?? 'Store Manager',
                                   );

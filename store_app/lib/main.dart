@@ -24,6 +24,7 @@ import 'services/billing_service.dart';
 import 'services/supplier_service.dart';
 import 'services/notification_service.dart';
 import 'services/analytics_service.dart';
+import 'services/purchase_order_service.dart';
 
 void main() {
   // IMPORTANT: runZonedGuarded must wrap EVERYTHING including ensureInitialized
@@ -79,6 +80,7 @@ class StoreIQApp extends StatelessWidget {
         Provider<LoyaltyService>(create: (_) => LoyaltyService()),
         Provider<BillingService>(create: (_) => BillingService()),
         Provider<SupplierService>(create: (_) => SupplierService()),
+        Provider<PurchaseOrderService>(create: (_) => PurchaseOrderService()),
         Provider<NotificationService>.value(value: notificationService),
         ProxyProvider2<InventoryService, CustomerService, SalesService>(
           update: (_, inv, cust, __) => SalesService(inv, cust),

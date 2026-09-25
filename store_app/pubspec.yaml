@@ -21,6 +21,7 @@ dependencies:
   provider: ^6.1.2
   riverpod: ^2.5.1
   flutter_riverpod: ^2.5.1
+  rxdart: ^0.28.0
 
   # Navigation
   go_router: ^14.3.0

@@ -6,8 +6,6 @@ import '../../config/app_theme.dart';
 import '../../models/sale_model.dart';
 import '../../providers/store_provider.dart';
 import '../../services/sales_service.dart';
-import '../../services/customer_service.dart';
-import '../../services/inventory_service.dart';
 
 
 /// Comprehensive Sales Analytics Screen with charts and insights
@@ -23,6 +21,7 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   late SalesService _salesService;
+  bool _servicesInitialized = false;
 
   // Period selection
   String _selectedPeriod = 'Last 7 Days';
@@ -34,10 +33,16 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _salesService = SalesService(
-      context.read<InventoryService>(),
-      context.read<CustomerService>(),
-    );
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Initialize service here where context is available
+    if (!_servicesInitialized) {
+      _salesService = context.read<SalesService>();
+      _servicesInitialized = true;
+    }
   }
 
   @override

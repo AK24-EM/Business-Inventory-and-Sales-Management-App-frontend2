@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:rxdart/rxdart.dart';
 import '../models/inventory_model.dart';
 import '../models/restock_model.dart';
 import '../models/supplier_model.dart';
@@ -25,89 +26,126 @@ class InventoryProvider extends ChangeNotifier {
   String? get error => _error;
 
   // ── Replay-capable broadcast streams (BehaviorSubject pattern) ───────────
-  // Each storeId gets a StreamController that immediately replays the last
+  // Each storeId gets a BehaviorSubject that immediately replays the last
   // cached value to new subscribers — fixing the "missed first event" issue
   // with Firestore's asBroadcastStream() on Web.
-  final Map<String, StreamController<List<InventoryModel>>> _inventoryControllers = {};
-  final Map<String, List<InventoryModel>> _inventoryCache = {};
+  final Map<String, BehaviorSubject<List<InventoryModel>>> _inventorySubjects = {};
   final Map<String, StreamSubscription<List<InventoryModel>>> _inventoryFirestoreSubs = {};
 
-  Map<String, Stream<List<StockTransfer>>>? _pendingTransferStreams;
-  Map<String, Stream<List<StockTransfer>>> get _safePendingTransferStreams =>
-      _pendingTransferStreams ??= <String, Stream<List<StockTransfer>>>{};
+  Map<String, BehaviorSubject<List<StockTransfer>>>? _pendingTransferSubjects;
+  Map<String, BehaviorSubject<List<StockTransfer>>> get _safePendingTransferSubjects =>
+      _pendingTransferSubjects ??= <String, BehaviorSubject<List<StockTransfer>>>{};
 
-  Map<String, Stream<List<StockTransfer>>>? _allTransferStreams;
-  Map<String, Stream<List<StockTransfer>>> get _safeAllTransferStreams =>
-      _allTransferStreams ??= <String, Stream<List<StockTransfer>>>{};
+  Map<String, BehaviorSubject<List<StockTransfer>>>? _allTransferSubjects;
+  Map<String, BehaviorSubject<List<StockTransfer>>> get _safeAllTransferSubjects =>
+      _allTransferSubjects ??= <String, BehaviorSubject<List<StockTransfer>>>{};
 
-  Map<String, Stream<List<DamagedProduct>>>? _damageReportStreams;
-  Map<String, Stream<List<DamagedProduct>>> get _safeDamageReportStreams =>
-      _damageReportStreams ??= <String, Stream<List<DamagedProduct>>>{};
+  Map<String, BehaviorSubject<List<DamagedProduct>>>? _damageReportSubjects;
+  Map<String, BehaviorSubject<List<DamagedProduct>>> get _safeDamageReportSubjects =>
+      _damageReportSubjects ??= <String, BehaviorSubject<List<DamagedProduct>>>{};
 
-  /// Replay-capable inventory stream.
-  /// New subscribers immediately receive the last known value (like BehaviorSubject),
+  /// Replay-capable inventory stream with debouncing and error recovery.
+  /// New subscribers immediately receive the last known value (BehaviorSubject),
   /// then continue to receive live Firestore updates.
   Stream<List<InventoryModel>> watchInventory(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
 
-    // Return existing controller's stream if already set up
-    if (_inventoryControllers.containsKey(storeId)) {
-      final controller = _inventoryControllers[storeId]!;
-      // Replay last known value immediately to the new subscriber
-      final cached = _inventoryCache[storeId];
-      if (cached != null) {
-        // Schedule the replay on the next microtask so the listener is ready
-        Future.microtask(() {
-          if (!controller.isClosed) controller.add(cached);
-        });
-      }
-      return controller.stream;
+    // Return existing subject's stream if already set up
+    if (_inventorySubjects.containsKey(storeId)) {
+      return _inventorySubjects[storeId]!.stream
+          .distinct() // Prevent duplicate emissions
+          .handleError((error) {
+            debugPrint('Inventory stream error ($storeId): $error');
+            // Return empty list on error to keep UI functional
+            return <InventoryModel>[];
+          });
     }
 
-    // First time: create a broadcast StreamController
-    final controller = StreamController<List<InventoryModel>>.broadcast();
-    _inventoryControllers[storeId] = controller;
+    // First time: create a BehaviorSubject with debouncing
+    final subject = BehaviorSubject<List<InventoryModel>>();
+    _inventorySubjects[storeId] = subject;
 
-    // Subscribe to the real Firestore stream
-    final firestoreSub = _service.getStoreInventoryStream(storeId).listen(
-      (items) {
-        _inventoryCache[storeId] = items;
-        // Merge into flat _inventory cache
-        _inventory = [
-          ..._inventory.where((i) => i.storeId != storeId),
-          ...items,
-        ];
-        if (!controller.isClosed) controller.add(items);
-        notifyListeners();
-      },
-      onError: (err) {
+    // Subscribe to the real Firestore stream with debouncing and error handling
+    final firestoreSub = _service.getStoreInventoryStream(storeId)
+      .distinct() // Skip duplicate events from Firestore
+      .debounceTime(const Duration(milliseconds: 300)) // Debounce rapid updates
+      .handleError((err) {
         debugPrint('Firestore inventory stream error ($storeId): $err');
-        if (!controller.isClosed) controller.addError(err);
-      },
-    );
+        // Don't propagate error to UI - just log it
+      })
+      .listen(
+        (items) {
+          // Update cache
+          _inventory = [
+            ..._inventory.where((i) => i.storeId != storeId),
+            ...items,
+          ];
+          
+          // Emit to all subscribers
+          if (!subject.isClosed) {
+            subject.add(items);
+          }
+          notifyListeners();
+        },
+        onError: (err) {
+          debugPrint('Inventory subscription error ($storeId): $err');
+          // Emit empty list to keep UI functional
+          if (!subject.isClosed) {
+            subject.add([]);
+          }
+        },
+        cancelOnError: false, // Keep subscription alive on errors
+      );
+    
     _inventoryFirestoreSubs[storeId] = firestoreSub;
 
-    return controller.stream;
+    return subject.stream
+        .distinct() // Additional distinct for safety
+        .handleError((error) {
+          debugPrint('Subject stream error ($storeId): $error');
+          return <InventoryModel>[];
+        });
   }
 
   Stream<List<InventoryModel>> watchLowStock(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
     // Derive low-stock stream from the replay-capable watchInventory
     return watchInventory(storeId)
-        .map((items) => items.where((i) => i.isLowStock).toList());
+        .map((items) => items.where((i) => i.isLowStock).toList())
+        .distinct();
   }
 
-  Map<String, Stream<List<RestockModel>>>? _restockStreams;
-  Map<String, Stream<List<RestockModel>>> get _safeRestockStreams =>
-      _restockStreams ??= <String, Stream<List<RestockModel>>>{};
+  Map<String, BehaviorSubject<List<RestockModel>>>? _restockSubjects;
+  Map<String, BehaviorSubject<List<RestockModel>>> get _safeRestockSubjects =>
+      _restockSubjects ??= <String, BehaviorSubject<List<RestockModel>>>{};
 
   /// Real-time stream of restock events from the dedicated `restocks` collection.
   Stream<List<RestockModel>> watchRestocks(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
-    return _safeRestockStreams.putIfAbsent(
+    
+    return _safeRestockSubjects.putIfAbsent(
       storeId,
-      () => _service.getRestocksStream(storeId).asBroadcastStream(),
-    );
+      () {
+        final subject = BehaviorSubject<List<RestockModel>>();
+        _service.getRestocksStream(storeId)
+          .distinct()
+          .debounceTime(const Duration(milliseconds: 300))
+          .handleError((err) {
+            debugPrint('Restocks stream error ($storeId): $err');
+          })
+          .listen(
+            (data) {
+              if (!subject.isClosed) subject.add(data);
+            },
+            onError: (err) {
+              debugPrint('Restocks subscription error: $err');
+              if (!subject.isClosed) subject.add([]);
+            },
+            cancelOnError: false,
+          );
+        return subject;
+      },
+    ).stream.distinct();
   }
 
   /// One-time fetch of restock history (useful for reports/analytics).
@@ -116,26 +154,86 @@ class InventoryProvider extends ChangeNotifier {
 
   Stream<List<StockTransfer>> watchPendingTransfers(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
-    return _safePendingTransferStreams.putIfAbsent(
+    
+    return _safePendingTransferSubjects.putIfAbsent(
       storeId,
-      () => _service.getPendingTransfersStream(storeId).asBroadcastStream(),
-    );
+      () {
+        final subject = BehaviorSubject<List<StockTransfer>>();
+        _service.getPendingTransfersStream(storeId)
+          .distinct()
+          .debounceTime(const Duration(milliseconds: 300))
+          .handleError((err) {
+            debugPrint('Pending transfers stream error ($storeId): $err');
+          })
+          .listen(
+            (data) {
+              if (!subject.isClosed) subject.add(data);
+            },
+            onError: (err) {
+              debugPrint('Pending transfers error: $err');
+              if (!subject.isClosed) subject.add([]);
+            },
+            cancelOnError: false,
+          );
+        return subject;
+      },
+    ).stream.distinct();
   }
 
   Stream<List<StockTransfer>> watchAllTransfers(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
-    return _safeAllTransferStreams.putIfAbsent(
+    
+    return _safeAllTransferSubjects.putIfAbsent(
       storeId,
-      () => _service.getAllTransfersStream(storeId).asBroadcastStream(),
-    );
+      () {
+        final subject = BehaviorSubject<List<StockTransfer>>();
+        _service.getAllTransfersStream(storeId)
+          .distinct()
+          .debounceTime(const Duration(milliseconds: 300))
+          .handleError((err) {
+            debugPrint('All transfers stream error ($storeId): $err');
+          })
+          .listen(
+            (data) {
+              if (!subject.isClosed) subject.add(data);
+            },
+            onError: (err) {
+              debugPrint('All transfers error: $err');
+              if (!subject.isClosed) subject.add([]);
+            },
+            cancelOnError: false,
+          );
+        return subject;
+      },
+    ).stream.distinct();
   }
 
   Stream<List<DamagedProduct>> watchDamageReports(String storeId) {
     if (storeId.isEmpty) return const Stream.empty();
-    return _safeDamageReportStreams.putIfAbsent(
+    
+    return _safeDamageReportSubjects.putIfAbsent(
       storeId,
-      () => _service.getDamageReportsStream(storeId).asBroadcastStream(),
-    );
+      () {
+        final subject = BehaviorSubject<List<DamagedProduct>>();
+        _service.getDamageReportsStream(storeId)
+          .distinct()
+          .debounceTime(const Duration(milliseconds: 300))
+          .handleError((err) {
+            debugPrint('Damage reports stream error ($storeId): $err');
+          })
+          .listen(
+            (data) {
+              if (!subject.isClosed) subject.add(data);
+            },
+            onError: (err) {
+              debugPrint('Damage reports error: $err');
+              if (!subject.isClosed) subject.add([]);
+            },
+            cancelOnError: false,
+          );
+        return subject;
+      },
+    ).stream.distinct();
   }
 
   Future<InventoryModel?> getItem(String storeId, String productId) =>
@@ -376,6 +474,43 @@ class InventoryProvider extends ChangeNotifier {
   }
 
   Stream<List<StockMovement>> watchMovements(
-          String storeId, String productId) =>
-      _service.getMovementHistoryStream(storeId, productId);
+          String storeId, String productId) {
+    return _service.getMovementHistoryStream(storeId, productId)
+        .distinct()
+        .debounceTime(const Duration(milliseconds: 300))
+        .handleError((err) {
+          debugPrint('Movements stream error ($storeId/$productId): $err');
+          return <StockMovement>[];
+        });
+  }
+
+  @override
+  void dispose() {
+    // Close all BehaviorSubjects
+    for (final subject in _inventorySubjects.values) {
+      subject.close();
+    }
+    for (final subject in _safeRestockSubjects.values) {
+      subject.close();
+    }
+    for (final subject in _safePendingTransferSubjects.values) {
+      subject.close();
+    }
+    for (final subject in _safeAllTransferSubjects.values) {
+      subject.close();
+    }
+    for (final subject in _safeDamageReportSubjects.values) {
+      subject.close();
+    }
+    
+    // Cancel all Firestore subscriptions
+    for (final sub in _inventoryFirestoreSubs.values) {
+      sub.cancel();
+    }
+    
+    _inventorySubjects.clear();
+    _inventoryFirestoreSubs.clear();
+    
+    super.dispose();
+  }
 }
