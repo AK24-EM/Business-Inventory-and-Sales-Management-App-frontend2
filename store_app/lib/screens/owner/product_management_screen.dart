@@ -369,6 +369,44 @@ class _AddProductSheetState extends State<_AddProductSheet> {
                 decoration:
                     const InputDecoration(labelText: 'Description (Optional)'),
               ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _stockCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Initial Stock *',
+                        hintText: '0',
+                        prefixIcon: Icon(Icons.inventory_outlined),
+                      ),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Required';
+                        if (int.tryParse(v) == null) return 'Invalid';
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _minStockCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Min Stock Level *',
+                        hintText: '5',
+                        prefixIcon: Icon(Icons.warning_amber_outlined),
+                      ),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Required';
+                        if (int.tryParse(v) == null) return 'Invalid';
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,

@@ -1776,26 +1776,34 @@ class _EmployeeLogDamageSheetState extends State<_EmployeeLogDamageSheet> {
                             child: Text(p.name, overflow: TextOverflow.ellipsis),
                           ))
                       .toList(),
-                  onChanged: (val) async {
+                  onChanged: (val) {
                     if (val == null) return;
                     final matched = products.firstWhere((p) => p.id == val);
                     int stock = 0;
-                    try {
-                      final currentStoreId =
-                          context.read<StoreProvider>().selectedStore?.id ?? 'store_1';
-                      final item = await context
-                          .read<InventoryProvider>()
-                          .getItem(currentStoreId, val);
-                      stock = item?.currentStock ?? 0;
-                    } catch (_) {}
-                    if (mounted) {
-                      setState(() {
-                        _selectedProductId = val;
-                        _selectedProductName = matched.name;
-                        _unitPrice = matched.sellingPrice;
-                        _availableStock = stock;
-                      });
-                    }
+                    
+                    // Get stock from already-loaded inventory instead of async call
+                    final invProvider = context.read<InventoryProvider>();
+                    final inventoryItem = invProvider.inventory.firstWhere(
+                      (item) => item.productId == val,
+                      orElse: () => InventoryModel(
+                        id: '',
+                        storeId: '',
+                        productId: val,
+                        productName: matched.name,
+                        category: matched.category,
+                        currentStock: 0,
+                        minimumStockLevel: 0,
+                        lastUpdated: DateTime.now(),
+                      ),
+                    );
+                    stock = inventoryItem.currentStock;
+                    
+                    setState(() {
+                      _selectedProductId = val;
+                      _selectedProductName = matched.name;
+                      _unitPrice = matched.sellingPrice;
+                      _availableStock = stock;
+                    });
                   },
                 ),
               if (_selectedProductId != null && widget.preselectedItem == null)
@@ -2174,25 +2182,33 @@ class _EmployeeInitiateTransferSheetState
                             child: Text(p.name, overflow: TextOverflow.ellipsis),
                           ))
                       .toList(),
-                  onChanged: (val) async {
+                  onChanged: (val) {
                     if (val == null) return;
                     final matched = products.firstWhere((p) => p.id == val);
                     int stock = 0;
-                    try {
-                      final currentStoreId =
-                          context.read<StoreProvider>().selectedStore?.id ?? 'store_1';
-                      final item = await context
-                          .read<InventoryProvider>()
-                          .getItem(currentStoreId, val);
-                      stock = item?.currentStock ?? 0;
-                    } catch (_) {}
-                    if (mounted) {
-                      setState(() {
-                        _selectedProductId = val;
-                        _selectedProductName = matched.name;
-                        _availableStock = stock;
-                      });
-                    }
+                    
+                    // Get stock from already-loaded inventory instead of async call
+                    final invProvider = context.read<InventoryProvider>();
+                    final inventoryItem = invProvider.inventory.firstWhere(
+                      (item) => item.productId == val,
+                      orElse: () => InventoryModel(
+                        id: '',
+                        storeId: '',
+                        productId: val,
+                        productName: matched.name,
+                        category: matched.category,
+                        currentStock: 0,
+                        minimumStockLevel: 0,
+                        lastUpdated: DateTime.now(),
+                      ),
+                    );
+                    stock = inventoryItem.currentStock;
+                    
+                    setState(() {
+                      _selectedProductId = val;
+                      _selectedProductName = matched.name;
+                      _availableStock = stock;
+                    });
                   },
                 ),
               if (_selectedProductId != null && widget.preselectedItem == null)

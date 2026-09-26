@@ -7,8 +7,10 @@ import '../../widgets/store_header_widget.dart';
 import '../../providers/supplier_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/store_provider.dart';
+import '../../providers/product_provider.dart';
 import '../../services/supplier_service.dart';
 import '../../models/supplier_model.dart';
+import '../../models/product_model.dart';
 
 /// Modern Enterprise Purchase Orders & Procurement Screen.
 /// Follows the market-ready retail design system.
@@ -39,65 +41,94 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.only(bottom: 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 1. Top Enterprise Store Header
-              const StoreHeaderWidget(
-                title: 'Purchase Orders',
-                subtitle: 'VENDOR PROCUREMENT • Downtown Hub',
+    final storeId =
+        context.watch<StoreProvider>().selectedStore?.id;
+    final supplierService = SupplierService();
+    return StreamBuilder<List<PurchaseOrder>>(
+      stream: supplierService.getPurchaseOrdersStream(storeId: storeId),
+      builder: (context, snapshot) {
+        final orders = snapshot.data ?? [];
+        final activePOs = orders
+            .where((o) =>
+                o.status == PurchaseOrderStatus.sent ||
+                o.status == PurchaseOrderStatus.draft)
+            .toList();
+        final inTransit = activePOs
+            .where((o) => o.status == PurchaseOrderStatus.sent)
+            .length;
+        final committedAmount =
+            activePOs.fold<double>(0, (s, o) => s + o.totalAmount);
+        final vendorSet = orders.map((o) => o.supplierId).toSet();
+        final fmt =
+            NumberFormat.currency(symbol: '\u20b9', decimalDigits: 0);
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFF8FAFC),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.only(bottom: 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 1. Top Enterprise Store Header
+                  const StoreHeaderWidget(
+                    title: 'Purchase Orders',
+                    subtitle: 'VENDOR PROCUREMENT',
+                  ),
+
+                  // 1b. Procurement Hub Banner
+                  _buildPOBanner(
+                      activePOs.length, fmt.format(committedAmount),
+                      vendorSet.length, inTransit),
+
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // 2. Summary KPI Metrics
+                        _buildPOKPIRow(activePOs.length, inTransit,
+                            committedAmount, vendorSet.length, fmt),
+                        const SizedBox(height: 16),
+
+                        // 3. Segmented Pill Tab Bar
+                        _buildSegmentedTabs(),
+                        const SizedBox(height: 16),
+
+                        // 4. Tab Body Content
+                        if (_activeTabIndex == 0)
+                          _CreatePurchaseOrderTab(
+                            supplier: widget.supplier,
+                            prefilledItems: widget.prefilledItems,
+                            onDispatched: () =>
+                                setState(() => _activeTabIndex = 1),
+                          )
+                        else
+                          const _PurchaseOrderHistoryTab(),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-
-              // 1b. Procurement Hub Banner
-              _buildPOBanner(),
-
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // 2. Summary KPI Metrics
-                    _buildPOKPIRow(),
-                    const SizedBox(height: 16),
-
-                    // 3. Segmented Pill Tab Bar
-                    _buildSegmentedTabs(),
-                    const SizedBox(height: 16),
-
-                    // 4. Tab Body Content
-                    if (_activeTabIndex == 0)
-                      _CreatePurchaseOrderTab(
-                        supplier: widget.supplier,
-                        prefilledItems: widget.prefilledItems,
-                        onDispatched: () => setState(() => _activeTabIndex = 1),
-                      )
-                    else
-                      const _PurchaseOrderHistoryTab(),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
   // ── KPI Summary Row ──
-  Widget _buildPOKPIRow() {
+  Widget _buildPOKPIRow(int activePOs, int inTransit, double committed,
+      int vendors, NumberFormat fmt) {
     return Row(
       children: [
         Expanded(
           child: _buildKPICard(
             title: 'ACTIVE POS',
-            value: '4 orders',
-            badgeText: '2 In transit',
+            value: '$activePOs orders',
+            badgeText: '$inTransit In transit',
             badgeColor: const Color(0xFF2563EB),
             badgeBg: const Color(0xFFEFF6FF),
             icon: Icons.receipt_long_rounded,
@@ -107,7 +138,7 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
         Expanded(
           child: _buildKPICard(
             title: 'COMMITTED',
-            value: '₹48,200',
+            value: fmt.format(committed),
             badgeText: 'Net total',
             badgeColor: const Color(0xFF10B981),
             badgeBg: const Color(0xFFDCFCE7),
@@ -118,8 +149,8 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
         Expanded(
           child: _buildKPICard(
             title: 'VENDORS',
-            value: '12 Active',
-            badgeText: '98% on-time',
+            value: '$vendors Active',
+            badgeText: 'on file',
             badgeColor: const Color(0xFF6366F1),
             badgeBg: const Color(0xFFEEF2FF),
             icon: Icons.local_shipping_rounded,
@@ -258,7 +289,7 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
   }
 
   // ── Procurement Hub Banner ──
-  Widget _buildPOBanner() {
+  Widget _buildPOBanner(int activePOs, String committedAmount, int vendors, int inTransit) {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
       padding: const EdgeInsets.all(18),
@@ -322,11 +353,11 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _poBannerStat('Active POs', '4 Orders', Icons.receipt_long_rounded, const Color(0xFFFDE68A)),
+                _poBannerStat('Active POs', '$activePOs Orders', Icons.receipt_long_rounded, const Color(0xFFFDE68A)),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
-                _poBannerStat('Committed', '₹48,200', Icons.currency_rupee_rounded, const Color(0xFF6EE7B7)),
+                _poBannerStat('Committed', committedAmount, Icons.currency_rupee_rounded, const Color(0xFF6EE7B7)),
                 Container(width: 1, height: 32, color: Colors.white.withValues(alpha: 0.2)),
-                _poBannerStat('Vendors', '12 Active', Icons.business_rounded, const Color(0xFF93C5FD)),
+                _poBannerStat('Vendors', '$vendors Active', Icons.business_rounded, const Color(0xFF93C5FD)),
               ],
             ),
           ),
@@ -1343,6 +1374,32 @@ class _AddOrderItemDialogState extends State<_AddOrderItemDialog> {
   final _productNameCtrl = TextEditingController();
   final _quantityCtrl = TextEditingController();
   final _unitPriceCtrl = TextEditingController();
+  String? _selectedProductId;
+
+  // Filter product list as user types
+  List<Map<String, String>> _filteredProducts = [];
+  bool _dropdownOpen = false;
+
+  void _filterProducts(String query, List<ProductModel> products) {
+    if (query.isEmpty) {
+      setState(() {
+        _filteredProducts = [];
+        _dropdownOpen = false;
+      });
+      return;
+    }
+    final q = query.toLowerCase();
+    final results = products
+        .where((p) => p.name.toLowerCase().contains(q))
+        .take(6)
+        .map<Map<String, String>>(
+            (p) => {'id': p.id, 'name': p.name, 'price': p.purchasePrice.toStringAsFixed(2)})
+        .toList();
+    setState(() {
+      _filteredProducts = results;
+      _dropdownOpen = results.isNotEmpty;
+    });
+  }
 
   @override
   void dispose() {
@@ -1354,45 +1411,106 @@ class _AddOrderItemDialogState extends State<_AddOrderItemDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // Get products directly from ProductProvider
+    final allProducts =
+        Provider.of<ProductProvider>(context, listen: false).products;
+    return _dialog(context, allProducts);
+  }
+
+  Widget _dialog(BuildContext context, List<ProductModel> productList) {
     return AlertDialog(
-      title: const Text('Add Procurement Item', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700, fontSize: 15)),
+      title: const Text('Add Procurement Item',
+          style: TextStyle(
+              fontFamily: 'Poppins', fontWeight: FontWeight.w700, fontSize: 15)),
       content: Form(
         key: _formKey,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextFormField(
               controller: _productNameCtrl,
-              decoration: const InputDecoration(labelText: 'Product Name *', hintText: 'e.g. Organic Almond Milk'),
-              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+              decoration: const InputDecoration(
+                  labelText: 'Product Name *',
+                  hintText: 'e.g. Organic Almond Milk'),
+              onChanged: (v) => _filterProducts(v, productList),
+              validator: (v) =>
+                  v == null || v.isEmpty ? 'Required' : null,
             ),
+            if (_dropdownOpen)
+              Container(
+                constraints: const BoxConstraints(maxHeight: 160),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: _filteredProducts.map((p) {
+                    return ListTile(
+                      dense: true,
+                      title: Text(p['name']!,
+                          style: const TextStyle(
+                              fontFamily: 'Poppins', fontSize: 12)),
+                      subtitle: Text('₹${p['price']}',
+                          style: const TextStyle(fontSize: 11)),
+                      onTap: () {
+                        setState(() {
+                          _selectedProductId = p['id'];
+                          _productNameCtrl.text = p['name']!;
+                          _unitPriceCtrl.text = p['price']!;
+                          _dropdownOpen = false;
+                          _filteredProducts = [];
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
             const SizedBox(height: 10),
             TextFormField(
               controller: _quantityCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Quantity (Units) *'),
+              decoration:
+                  const InputDecoration(labelText: 'Quantity (Units) *'),
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              validator: (v) => v == null || int.tryParse(v) == null ? 'Valid qty required' : null,
+              validator: (v) =>
+                  v == null || int.tryParse(v) == null
+                      ? 'Valid qty required'
+                      : null,
             ),
             const SizedBox(height: 10),
             TextFormField(
               controller: _unitPriceCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Unit Price (₹) *'),
-              validator: (v) => v == null || double.tryParse(v) == null ? 'Valid price required' : null,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration:
+                  const InputDecoration(labelText: 'Unit Price (₹) *'),
+              validator: (v) =>
+                  v == null || double.tryParse(v) == null
+                      ? 'Valid price required'
+                      : null,
             ),
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
         ElevatedButton(
           onPressed: () {
             if (_formKey.currentState!.validate()) {
+              final productId = _selectedProductId ??
+                  _productNameCtrl.text
+                      .toLowerCase()
+                      .trim()
+                      .replaceAll(' ', '_');
               Navigator.pop(
                 context,
                 _OrderItem(
-                  productId: _productNameCtrl.text.toLowerCase().replaceAll(' ', '_'),
+                  productId: productId,
                   productName: _productNameCtrl.text.trim(),
                   quantity: int.parse(_quantityCtrl.text),
                   unitPrice: double.parse(_unitPriceCtrl.text),

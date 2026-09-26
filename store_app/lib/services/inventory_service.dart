@@ -368,16 +368,20 @@ class InventoryService {
 
   Stream<List<StockMovement>> getMovementHistoryStream(
       String storeId, String productId) {
-    Query<Map<String, dynamic>> query = _movements
-        .where('storeId', isEqualTo: storeId)
-        .orderBy('timestamp', descending: true);
-    
+    // Apply productId filter first, then orderBy — avoids needing a composite index.
+    Query<Map<String, dynamic>> query =
+        _movements.where('storeId', isEqualTo: storeId);
+
     if (productId.isNotEmpty) {
       query = query.where('productId', isEqualTo: productId);
     }
-    
-    return query.snapshots().map((snap) =>
-        snap.docs.map(StockMovement.fromFirestore).toList());
+
+    // In-memory sort to avoid composite index requirement for multi-field ordering.
+    return query.snapshots().map((snap) {
+      final list = snap.docs.map(StockMovement.fromFirestore).toList();
+      list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return list;
+    });
   }
 
   Stream<List<StockTransfer>> getPendingTransfersStream(String storeId) {

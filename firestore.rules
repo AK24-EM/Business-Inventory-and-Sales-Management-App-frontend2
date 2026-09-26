@@ -168,15 +168,29 @@ service cloud.firestore {
     }
 
     match /stockTransfers/{transferId} {
-      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
-      allow create, update: if hasAnyRole(['owner', 'admin', 'manager'])
-        && hasRequiredFields(['sourceStoreId', 'destinationStoreId', 'status']);
+      // Allow all staff (including employees) to read transfers
+      allow read: if isStaff();
+      
+      // Allow all staff (including employees) to create transfers
+      allow create: if isStaff()
+        && hasRequiredFields(['sourceStoreId', 'destinationStoreId', 'status'])
+        && (belongsToStore(request.resource.data.sourceStoreId) 
+            || belongsToStore(request.resource.data.destinationStoreId));
+      
+      // Allow managers and above to update transfers (for confirmation)
+      allow update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && (belongsToStore(resource.data.sourceStoreId) 
+            || belongsToStore(resource.data.destinationStoreId));
+      
+      // Only owners and admins can delete transfers
       allow delete: if isOwnerOrAdmin();
     }
 
     match /transfers/{transferId} {
-      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
-      allow create, update: if hasAnyRole(['owner', 'admin', 'manager']);
+      // Legacy transfers collection - same permissions as stockTransfers
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update: if hasAnyRole(['owner', 'admin', 'manager']);
       allow delete: if isOwnerOrAdmin();
     }
 
@@ -211,10 +225,20 @@ service cloud.firestore {
     }
 
     match /damagedProducts/{damagedId} {
-      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
-      allow create: if hasAnyRole(['owner', 'admin', 'manager'])
-        && hasRequiredFields(['storeId', 'productId', 'quantity', 'reason']);
-      allow update, delete: if isOwnerOrAdmin();
+      // Allow all staff (including employees) to read damage reports
+      allow read: if isStaff();
+      
+      // Allow all staff (including employees) to create damage reports
+      allow create: if isStaff()
+        && hasRequiredFields(['storeId', 'productId', 'quantity', 'reason'])
+        && belongsToStore(request.resource.data.storeId);
+      
+      // Only managers and above can update damage reports
+      allow update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && belongsToStore(resource.data.storeId);
+      
+      // Only owners and admins can delete damage reports
+      allow delete: if isOwnerOrAdmin();
     }
 
     match /dailyReports/{reportId} {
