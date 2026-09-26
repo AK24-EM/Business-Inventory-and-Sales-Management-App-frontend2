@@ -19,11 +19,16 @@ class SalesService {
   final Map<String, Stream<List<SaleModel>>> _storeSalesStreams = {};
   Stream<List<SaleModel>>? _allSalesStream;
 
+  // PERFORMANCE FIX: Store separate streams per date range, not just per store
+  final Map<String, Stream<List<SaleModel>>> _cachedStreams = {};
+  Timer? _cacheCleanupTimer;
+
   Stream<List<SaleModel>> _getRawStoreSalesStream(String storeId) {
     return _storeSalesStreams.putIfAbsent(storeId, () {
       return _sales
           .where('storeId', isEqualTo: storeId)
           .orderBy('timestamp', descending: true) // Sort at Firestore level
+          .limit(500) // Limit to recent 500 sales to prevent loading all history
           .snapshots()
           .map((snap) {
             return snap.docs.map(SaleModel.fromFirestore).toList();
@@ -35,11 +40,64 @@ class SalesService {
   Stream<List<SaleModel>> _getRawAllSalesStream() {
     return _allSalesStream ??= _sales
         .orderBy('timestamp', descending: true) // Sort at Firestore level
+        .limit(1000) // Limit to recent 1000 sales to prevent loading entire database
         .snapshots()
         .map((snap) {
           return snap.docs.map(SaleModel.fromFirestore).toList();
         })
         .asBroadcastStream();
+  }
+
+  // OPTIMIZED: Create stream with Firestore-level date filtering
+  Stream<List<SaleModel>> _getDateRangeStream({
+    String? storeId,
+    List<String>? storeIds,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    final cacheKey = '${storeId ?? storeIds?.join(',') ?? 'all'}_${from.millisecondsSinceEpoch}_${to.millisecondsSinceEpoch}';
+    
+    return _cachedStreams.putIfAbsent(cacheKey, () {
+      Query<Map<String, dynamic>> query = _sales;
+      
+      // Apply store filter
+      if (storeId != null) {
+        query = query.where('storeId', isEqualTo: storeId);
+      } else if (storeIds != null && storeIds.isNotEmpty) {
+        if (storeIds.length <= 10) {
+          query = query.where('storeId', whereIn: storeIds);
+        }
+      }
+      
+      // CRITICAL: Apply date filter at Firestore level
+      final fromTimestamp = Timestamp.fromDate(from);
+      final toTimestamp = Timestamp.fromDate(to);
+      query = query
+          .where('timestamp', isGreaterThanOrEqualTo: fromTimestamp)
+          .where('timestamp', isLessThanOrEqualTo: toTimestamp)
+          .orderBy('timestamp', descending: true);
+      
+      // Schedule cleanup of old cache entries
+      _scheduleCacheCleanup();
+      
+      return query
+          .snapshots()
+          .map((snap) => snap.docs.map(SaleModel.fromFirestore).toList())
+          .asBroadcastStream();
+    });
+  }
+
+  void _scheduleCacheCleanup() {
+    _cacheCleanupTimer?.cancel();
+    _cacheCleanupTimer = Timer(const Duration(minutes: 5), () {
+      // Keep only the 3 most recent cache entries
+      if (_cachedStreams.length > 3) {
+        final keysToRemove = _cachedStreams.keys.take(_cachedStreams.length - 3).toList();
+        for (final key in keysToRemove) {
+          _cachedStreams.remove(key);
+        }
+      }
+    });
   }
 
   Future<SaleModel> completeSale({
@@ -139,46 +197,45 @@ class SalesService {
   }
 
   /// Real-time stream of sales for a specific store and date range.
-  /// Reuses single store broadcast stream to prevent Firestore Web connection flapping.
+  /// OPTIMIZED: Uses Firestore-level date filtering for better performance.
   Stream<List<SaleModel>> getSalesByStoreStream(
       String storeId, DateTime from, DateTime to) {
-    return _getRawStoreSalesStream(storeId).map((list) {
-      return list
-          .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
-          .toList();
-    });
+    return _getDateRangeStream(
+      storeId: storeId,
+      from: from,
+      to: to,
+    );
   }
 
   /// Real-time stream of all sales across all stores (or filtered by storeIds).
+  /// OPTIMIZED: Uses Firestore-level date filtering for better performance.
   Stream<List<SaleModel>> getSalesStream({
     List<String>? storeIds,
     required DateTime from,
     required DateTime to,
   }) {
-    if (storeIds != null && storeIds.length == 1) {
-      return getSalesByStoreStream(storeIds.first, from, to);
-    }
-    return _getRawAllSalesStream().map((list) {
-      return list.where((s) {
-        if (storeIds != null && storeIds.isNotEmpty && !storeIds.contains(s.storeId)) {
-          return false;
-        }
-        return !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to);
-      }).toList();
-    });
+    return _getDateRangeStream(
+      storeIds: storeIds,
+      from: from,
+      to: to,
+    );
   }
 
   Future<List<SaleModel>> getSalesByStore(
       String storeId, DateTime from, DateTime to) async {
     try {
+      // OPTIMIZED: Use Firestore-level date filtering
+      final fromTimestamp = Timestamp.fromDate(from);
+      final toTimestamp = Timestamp.fromDate(to);
+      
       final snap = await _sales
           .where('storeId', isEqualTo: storeId)
+          .where('timestamp', isGreaterThanOrEqualTo: fromTimestamp)
+          .where('timestamp', isLessThanOrEqualTo: toTimestamp)
+          .orderBy('timestamp', descending: true)
           .get();
-      final list = snap.docs.map(SaleModel.fromFirestore).toList();
-      list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      return list
-          .where((s) => !s.timestamp.isBefore(from) && !s.timestamp.isAfter(to))
-          .toList();
+      
+      return snap.docs.map(SaleModel.fromFirestore).toList();
     } catch (e) {
       debugPrint('getSalesByStore error: $e');
       return [];

@@ -13,7 +13,9 @@ import '../../models/user_model.dart';
 import '../../models/sale_model.dart';
 import '../../models/inventory_model.dart';
 import '../../models/purchase_order_model.dart';
+import '../../models/festival_model.dart';
 import '../../services/purchase_order_service.dart';
+import '../../services/festival_service.dart';
 
 /// Modern, enterprise-ready Store Manager Dashboard.
 /// Matches the employee-side UI design: blue gradient banner, segmented tabs,
@@ -538,144 +540,172 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
   }
 
   Widget _buildFestivalSurgeCard() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF7C2D12), Color(0xFFC2410C), Color(0xFFEA580C)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFEA580C).withValues(alpha: 0.28),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.auto_awesome_rounded, size: 12, color: Colors.white),
-                    SizedBox(width: 5),
-                    Text(
-                      'AI FESTIVAL DEMAND RADAR',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.bolt_rounded, size: 12, color: Color(0xFFB45309)),
-                    SizedBox(width: 3),
-                    Text(
-                      '+45% Surge Expected',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFFB45309),
-                      ),
-                    ),
-                  ],
-                ),
+    return StreamBuilder<List<FestivalModel>>(
+      stream: FestivalService().getUpcomingFestivalsStream(),
+      builder: (context, snapshot) {
+        final festivals = snapshot.data ?? [];
+        final next = festivals.isEmpty
+            ? null
+            : (festivals.where((f) => f.requiresManagerAction).isNotEmpty
+                ? festivals.firstWhere((f) => f.requiresManagerAction)
+                : festivals.first);
+        final badge = next == null
+            ? 'Live calendar'
+            : next.isOngoing
+                ? 'Ongoing now'
+                : next.isUrgent
+                    ? 'Starts in ${next.daysUntilStart}d'
+                    : next.needsAlert
+                        ? 'Order window open'
+                        : 'In ${next.daysUntilStart}d';
+        final title = next?.name ?? 'No upcoming festivals';
+        final body = next == null
+            ? 'Festivals added by the owner appear here in real time with order windows and calendars.'
+            : next.isOngoing
+                ? 'Watch fast movers and replenish before stock-outs. Open the festival desk for alerts.'
+                : 'Order by ${DateFormat('d MMM').format(next.alertDate)}. '
+                    '${next.advanceOrderDays}-day buffer • ${next.durationDays} day event.';
+
+        return Container(
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF7C2D12), Color(0xFFC2410C), Color(0xFFEA580C)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFEA580C).withValues(alpha: 0.28),
+                blurRadius: 14,
+                offset: const Offset(0, 5),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'Diwali & Festive Rush Stock Buffer',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Recommended 2.0x stock multiplier for Sweets, Dairy, Snacks & Dry Fruits. Place advance orders 10 days prior.',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 11.5,
-              color: Colors.white.withValues(alpha: 0.9),
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => context.go('/manager/sales-analytics'),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.white60),
-                    padding: const EdgeInsets.symmetric(vertical: 9),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: const Text(
-                    'View Historical Spike',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.auto_awesome_rounded, size: 12, color: Colors.white),
+                        SizedBox(width: 5),
+                        Text(
+                          'LIVE FESTIVAL ALERTS',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.bolt_rounded, size: 12, color: Color(0xFFB45309)),
+                        const SizedBox(width: 3),
+                        Text(
+                          badge,
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFB45309),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => context.go('/manager/festivals'),
-                  icon: const Icon(Icons.celebration_rounded, size: 15),
-                  label: const Text('Prepare Buffer ›'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: const Color(0xFFC2410C),
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 9),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    textStyle: const TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+              const SizedBox(height: 4),
+              Text(
+                body,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 11.5,
+                  color: Colors.white.withValues(alpha: 0.9),
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => context.go('/manager/festivals'),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white60),
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text(
+                        'Open calendars',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => context.go('/manager/festivals'),
+                      icon: const Icon(Icons.celebration_rounded, size: 15),
+                      label: const Text('Prepare Buffer ›'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFFC2410C),
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        textStyle: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

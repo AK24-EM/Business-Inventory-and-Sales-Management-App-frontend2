@@ -33,7 +33,9 @@ const auth = admin.auth();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type UserRole = "owner" | "manager" | "employee" | "admin";
+type UserRole = "owner" | "manager" | "employee" | "admin" | "customer";
+
+const STAFF_ASSIGNABLE_ROLES: UserRole[] = ["manager", "employee"];
 
 interface UserClaims {
   role: UserRole;
@@ -157,10 +159,22 @@ export const createUser = functions.https.onCall(
         "email, password, name, phone, and role are all required."
       );
     }
+    if (!STAFF_ASSIGNABLE_ROLES.includes(role)) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Owners may only assign manager or employee accounts. Customers self-register."
+      );
+    }
     if (password.length < 6) {
       throw new functions.https.HttpsError(
         "invalid-argument",
         "Password must be at least 6 characters."
+      );
+    }
+    if ((role === "manager" || role === "employee") && !assignedStoreId) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "assignedStoreId is required for manager and employee accounts."
       );
     }
 

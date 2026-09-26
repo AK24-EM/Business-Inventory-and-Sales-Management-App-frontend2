@@ -14,8 +14,13 @@ import '../../models/supplier_model.dart';
 /// Follows the market-ready retail design system.
 class PurchaseOrderScreen extends StatefulWidget {
   final SupplierModel? supplier;
+  final List<Map<String, dynamic>>? prefilledItems;
 
-  const PurchaseOrderScreen({super.key, this.supplier});
+  const PurchaseOrderScreen({
+    super.key, 
+    this.supplier,
+    this.prefilledItems,
+  });
 
   @override
   State<PurchaseOrderScreen> createState() => _PurchaseOrderScreenState();
@@ -67,7 +72,11 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
 
                     // 4. Tab Body Content
                     if (_activeTabIndex == 0)
-                      _CreatePurchaseOrderTab(supplier: widget.supplier)
+                      _CreatePurchaseOrderTab(
+                        supplier: widget.supplier,
+                        prefilledItems: widget.prefilledItems,
+                        onDispatched: () => setState(() => _activeTabIndex = 1),
+                      )
                     else
                       const _PurchaseOrderHistoryTab(),
                   ],
@@ -341,8 +350,14 @@ class _PurchaseOrderScreenState extends State<PurchaseOrderScreen> {
 // ── Tab 0: Create Purchase Order ──
 class _CreatePurchaseOrderTab extends StatefulWidget {
   final SupplierModel? supplier;
+  final List<Map<String, dynamic>>? prefilledItems;
+  final VoidCallback? onDispatched;
 
-  const _CreatePurchaseOrderTab({this.supplier});
+  const _CreatePurchaseOrderTab({
+    this.supplier,
+    this.prefilledItems,
+    this.onDispatched,
+  });
 
   @override
   State<_CreatePurchaseOrderTab> createState() => _CreatePurchaseOrderTabState();
@@ -359,23 +374,61 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
   void initState() {
     super.initState();
     _selectedSupplier = widget.supplier;
-    // Default demo items for immediate tactile testing
-    if (_items.isEmpty) {
-      _items.addAll([
+    _expectedDeliveryDate = DateTime.now().add(const Duration(days: 3));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bootstrap();
+    });
+  }
+
+  Future<void> _bootstrap() async {
+    if (!mounted) return;
+    final provider = context.read<SupplierProvider>();
+    await provider.loadSuppliers();
+    if (!mounted) return;
+
+    _loadPrefilledItems(provider);
+
+    _selectedSupplier ??= widget.supplier;
+    if (_selectedSupplier == null && provider.activeSuppliers.isNotEmpty) {
+      _selectedSupplier = provider.activeSuppliers.first;
+    } else if (_selectedSupplier == null && provider.suppliers.isNotEmpty) {
+      _selectedSupplier = provider.suppliers.first;
+    }
+
+    setState(() {});
+  }
+
+  void _loadPrefilledItems(SupplierProvider supplierProvider) {
+    final prefilled = widget.prefilledItems;
+    if (prefilled == null || prefilled.isEmpty) return;
+
+    for (final itemData in prefilled) {
+      final productName = (itemData['productName'] ?? '').toString().trim();
+      if (productName.isEmpty) continue;
+
+      final quantity = (itemData['quantity'] as num?)?.toInt() ?? 0;
+      if (quantity <= 0) continue;
+
+      _items.add(
         _OrderItem(
-          productId: 'p_rice',
-          productName: 'Basmati Royal Rice 5kg',
-          quantity: 20,
-          unitPrice: 420.0,
+          productId: (itemData['productId'] ?? productName).toString(),
+          productName: productName,
+          quantity: quantity,
+          unitPrice: (itemData['unitPrice'] as num?)?.toDouble() ?? 0,
         ),
-        _OrderItem(
-          productId: 'p_atta',
-          productName: 'Aashirvaad Whole Wheat 10kg',
-          quantity: 15,
-          unitPrice: 380.0,
-        ),
-      ]);
-      _expectedDeliveryDate = DateTime.now().add(const Duration(days: 3));
+      );
+
+      if (_selectedSupplier == null && itemData['supplierId'] != null) {
+        final supplierId = itemData['supplierId'].toString();
+        if (supplierId.isEmpty || supplierProvider.suppliers.isEmpty) continue;
+        try {
+          _selectedSupplier = supplierProvider.suppliers.firstWhere(
+            (s) => s.id == supplierId,
+          );
+        } catch (_) {
+          _selectedSupplier = supplierProvider.suppliers.first;
+        }
+      }
     }
   }
 
@@ -523,7 +576,9 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
-                  onPressed: _submitting ? null : _submitOrder,
+                  onPressed: (_submitting || _items.isEmpty || _selectedSupplier == null)
+                      ? null
+                      : _submitOrder,
                   icon: _submitting
                       ? const SizedBox(
                           width: 18,
@@ -642,7 +697,7 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
                         Icon(Icons.storefront_rounded, size: 18, color: Color(0xFF2563EB)),
                         SizedBox(width: 8),
                         Text(
-                          'ITC Hub Direct (Click to change vendor)',
+                          'Select a supplier before dispatching',
                           style: TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 12,
@@ -699,7 +754,62 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
           ],
         ),
         const SizedBox(height: 8),
-        ..._items.asMap().entries.map((entry) {
+        if (_items.isEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0), style: BorderStyle.solid),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEFF6FF),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.shopping_cart_outlined,
+                    size: 32,
+                    color: Color(0xFF2563EB),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'No Products Added Yet',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Click "Add Product" above to start building your purchase order',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11,
+                    color: Color(0xFF64748B),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                TextButton.icon(
+                  onPressed: _addItem,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('Add First Product'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF2563EB),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          ..._items.asMap().entries.map((entry) {
           final index = entry.key;
           final item = entry.value;
           return Container(
@@ -890,6 +1000,16 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
   }
 
   Future<void> _submitOrder() async {
+    if (_selectedSupplier == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select a supplier before dispatching this PO.'),
+          backgroundColor: Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     if (_items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -901,10 +1021,32 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
       return;
     }
 
+    final store = context.read<StoreProvider>().selectedStore;
+    if (store == null || store.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No store selected. Open this screen from a store first.'),
+          backgroundColor: Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final auth = context.read<AuthProvider>();
+    if (auth.currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You must be signed in to dispatch a purchase order.'),
+          backgroundColor: Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
     final provider = context.read<SupplierProvider>();
-    final auth = context.read<AuthProvider>();
-    final store = context.read<StoreProvider>();
 
     final orderItems = _items.map((item) {
       return PurchaseOrderItem(
@@ -918,35 +1060,47 @@ class _CreatePurchaseOrderTabState extends State<_CreatePurchaseOrderTab> {
 
     try {
       final success = await provider.createPurchaseOrder(
-        supplierId: _selectedSupplier?.id ?? 'sup_01',
+        supplierId: _selectedSupplier!.id,
+        supplierName: _selectedSupplier!.name,
         items: orderItems,
-        targetStoreId: store.selectedStore?.id ?? 'store_1',
-        userId: auth.currentUser?.id ?? 'mgr_01',
-        userName: auth.currentUser?.name ?? 'Store Manager',
+        targetStoreId: store.id,
+        storeName: store.name,
+        userId: auth.currentUser!.id,
+        userName: auth.currentUser!.name,
         expectedDeliveryDate: _expectedDeliveryDate,
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       );
 
-      if (success && mounted) {
+      if (!mounted) return;
+      if (success) {
+        final supplierName = _selectedSupplier!.name;
+        _clearOrder();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ Purchase Order dispatched to supplier successfully!'),
-            backgroundColor: Color(0xFF10B981),
+          SnackBar(
+            content: Text('Purchase order dispatched to $supplierName.'),
+            backgroundColor: const Color(0xFF10B981),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        widget.onDispatched?.call();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(provider.error ?? 'Could not dispatch purchase order.'),
+            backgroundColor: const Color(0xFFEF4444),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
-    } catch (_) {
-      // Fallback optimistic success for smooth demo experience
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ PO-4098 generated and transmitted to vendor.'),
-            backgroundColor: Color(0xFF10B981),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Dispatch failed: $e'),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
     if (mounted) setState(() => _submitting = false);
   }
@@ -974,206 +1128,75 @@ class _PurchaseOrderHistoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final storeId = context.read<StoreProvider>().selectedStore?.id;
+    final storeId = context.watch<StoreProvider>().selectedStore?.id;
     final supplierService = SupplierService();
 
     return StreamBuilder<List<PurchaseOrder>>(
       stream: supplierService.getPurchaseOrdersStream(storeId: storeId),
       builder: (context, snapshot) {
-        final liveOrders = snapshot.data ?? [];
-
-        if (liveOrders.isNotEmpty) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: liveOrders.map((o) => _PurchaseOrderCard(order: o)).toList(),
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Center(child: CircularProgressIndicator()),
           );
         }
 
-        // Realistic Fallback Orders matching high visual standard
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'ACTIVE & PAST REORDER PO RUNS',
-              style: TextStyle(
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Text(
+              'Could not load purchase orders: ${snapshot.error}',
+              style: const TextStyle(
                 fontFamily: 'Poppins',
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF64748B),
-                letterSpacing: 0.5,
+                fontSize: 12,
+                color: Color(0xFFEF4444),
               ),
             ),
-            const SizedBox(height: 10),
-            _buildDemoPOCard(
-              poId: 'PO-4091',
-              supplierName: 'ITC Hub Direct Distribution',
-              createdAt: 'Today, 9:30 AM',
-              eta: 'ETA: Tomorrow',
-              itemCount: 4,
-              totalAmount: '₹34,800.00',
-              status: 'SENT TO VENDOR',
-              statusColor: const Color(0xFF2563EB),
-              statusBg: const Color(0xFFEFF6FF),
-            ),
-            const SizedBox(height: 12),
-            _buildDemoPOCard(
-              poId: 'PO-4085',
-              supplierName: 'Fresh Agro Farm Supplies',
-              createdAt: '12 Sep 2026',
-              eta: 'Delivered',
-              itemCount: 2,
-              totalAmount: '₹14,200.00',
-              status: 'RECEIVED & AUDITED',
-              statusColor: const Color(0xFF10B981),
-              statusBg: const Color(0xFFDCFCE7),
-            ),
-            const SizedBox(height: 12),
-            _buildDemoPOCard(
-              poId: 'PO-4078',
-              supplierName: 'Amul Dairy Fresh Direct',
-              createdAt: '10 Sep 2026',
-              eta: 'Delivered',
-              itemCount: 6,
-              totalAmount: '₹22,450.00',
-              status: 'RECEIVED & AUDITED',
-              statusColor: const Color(0xFF10B981),
-              statusBg: const Color(0xFFDCFCE7),
-            ),
-          ],
-        );
-      },
-    );
-  }
+          );
+        }
 
-  Widget _buildDemoPOCard({
-    required String poId,
-    required String supplierName,
-    required String createdAt,
-    required String eta,
-    required int itemCount,
-    required String totalAmount,
-    required String status,
-    required Color statusColor,
-    required Color statusBg,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      poId,
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF2563EB),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    createdAt,
-                    style: const TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 11,
-                      color: Color(0xFF94A3B8),
-                    ),
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: statusBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  status,
+        final liveOrders = snapshot.data ?? [];
+        if (liveOrders.isEmpty) {
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: const Column(
+              children: [
+                Icon(Icons.receipt_long_outlined, size: 36, color: Color(0xFF94A3B8)),
+                SizedBox(height: 10),
+                Text(
+                  'No purchase orders yet',
                   style: TextStyle(
                     fontFamily: 'Poppins',
-                    fontSize: 9.5,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: statusColor,
+                    color: Color(0xFF0F172A),
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            supplierName,
-            style: const TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 13.5,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF0F172A),
+                SizedBox(height: 4),
+                Text(
+                  'Dispatched orders will appear here.',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              const Icon(Icons.local_shipping_outlined, size: 14, color: Color(0xFF64748B)),
-              const SizedBox(width: 5),
-              Text(
-                '$eta  •  $itemCount Products Ordered',
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 11,
-                  color: Color(0xFF64748B),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Grand Total',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF64748B),
-                ),
-              ),
-              Text(
-                totalAmount,
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: liveOrders.map((o) => _PurchaseOrderCard(order: o)).toList(),
+        );
+      },
     );
   }
 }
@@ -1199,7 +1222,9 @@ class _PurchaseOrderCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'PO-${order.id.length > 8 ? order.id.substring(0, 8).toUpperCase() : order.id}',
+                order.poNumber.isNotEmpty
+                    ? order.poNumber
+                    : 'PO-${order.id.length > 8 ? order.id.substring(0, 8).toUpperCase() : order.id}',
                 style: const TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: 11,
@@ -1250,28 +1275,23 @@ class _SupplierSelectionDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final list = suppliers.isNotEmpty
-        ? suppliers
-        : [
-            SupplierModel(
-              id: 'sup_01',
-              name: 'ITC Hub Direct Distribution',
-              contactPerson: 'V. Sundaram',
-              phone: '+91 98201 44882',
-              email: 'orders@itc.in',
-              address: 'Industrial Zone, Hub 4',
-              createdAt: DateTime(2026, 1, 1),
-            ),
-            SupplierModel(
-              id: 'sup_02',
-              name: 'Fresh Agro Farm Supplies',
-              contactPerson: 'A. Deshmukh',
-              phone: '+91 98450 11993',
-              email: 'fresh@agro.co.in',
-              address: 'Produce Terminal #12',
-              createdAt: DateTime(2026, 1, 1),
-            ),
-          ];
+    if (suppliers.isEmpty) {
+      return AlertDialog(
+        title: const Text(
+          'Select Supplier',
+          style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          'No suppliers found. Add a supplier first, then dispatch the purchase order.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      );
+    }
 
     return AlertDialog(
       title: const Text('Select Supplier', style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700)),
@@ -1279,10 +1299,10 @@ class _SupplierSelectionDialog extends StatelessWidget {
         width: double.maxFinite,
         child: ListView.separated(
           shrinkWrap: true,
-          itemCount: list.length,
+          itemCount: suppliers.length,
           separatorBuilder: (_, __) => const Divider(),
           itemBuilder: (_, index) {
-            final s = list[index];
+            final s = suppliers[index];
             return ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Container(

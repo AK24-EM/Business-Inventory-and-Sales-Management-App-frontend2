@@ -5,6 +5,7 @@ import '../../config/app_theme.dart';
 import '../../config/app_constants.dart';
 import '../../models/festival_model.dart';
 import '../../widgets/store_header_widget.dart';
+import '../../widgets/add_festival_sheet.dart';
 
 class FestivalScreen extends StatefulWidget {
   const FestivalScreen({super.key});
@@ -191,13 +192,7 @@ class _FestivalScreenState extends State<FestivalScreen>
   }
 
   void _showAddFestivalSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _AddFestivalSheet(db: _db),
-    );
+    AddFestivalSheet.show(context);
   }
 }
 
@@ -468,8 +463,16 @@ class _FestivalCard extends StatelessWidget {
       statusColor = AppColors.success;
       statusLabel = 'ONGOING';
     } else if (festival.isUpcoming) {
-      statusColor = festival.needsAlert ? AppColors.warning : AppColors.info;
-      statusLabel = festival.needsAlert ? 'ORDER NOW' : 'UPCOMING';
+      if (festival.isUrgent) {
+        statusColor = AppColors.error;
+        statusLabel = 'URGENT';
+      } else if (festival.needsAlert) {
+        statusColor = AppColors.warning;
+        statusLabel = 'ORDER NOW';
+      } else {
+        statusColor = AppColors.info;
+        statusLabel = 'UPCOMING';
+      }
     } else {
       statusColor = AppColors.textTertiary;
       statusLabel = 'PAST';
@@ -800,203 +803,6 @@ class _AlertStat extends StatelessWidget {
                 fontSize: 9,
                 fontWeight: FontWeight.w500,
                 color: Color(0xFF64748B),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AddFestivalSheet extends StatefulWidget {
-  final FirebaseFirestore db;
-  const _AddFestivalSheet({required this.db});
-
-  @override
-  State<_AddFestivalSheet> createState() =>
-      _AddFestivalSheetState();
-}
-
-class _AddFestivalSheetState extends State<_AddFestivalSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  DateTime? _startDate;
-  DateTime? _endDate;
-  int _advanceDays = 14;
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickDate(bool isStart) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now().add(const Duration(days: 730)),
-    );
-    if (picked != null) {
-      setState(() {
-        if (isStart) {
-          _startDate = picked;
-        } else {
-          _endDate = picked;
-        }
-      });
-    }
-  }
-
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_startDate == null || _endDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Select start and end dates')));
-      return;
-    }
-    
-    setState(() => _saving = true);
-    
-    try {
-      final ref = widget.db
-          .collection(AppConstants.festivalsCollection)
-          .doc();
-      
-      final festival = FestivalModel(
-        id: ref.id,
-        name: _nameCtrl.text.trim(),
-        startDate: _startDate!,
-        endDate: _endDate!,
-        advanceOrderDays: _advanceDays,
-        isActive: true, // Explicitly set to true
-        createdAt: DateTime.now(),
-      );
-      
-      print('Saving festival: ${festival.name} with ID: ${festival.id}');
-      print('Festival data: ${festival.toFirestore()}');
-      
-      await ref.set(festival.toFirestore());
-      
-      print('Festival saved successfully');
-      
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✓ Festival "${festival.name}" added successfully'),
-            backgroundColor: AppColors.success,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      print('Error saving festival: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error adding festival: $e'),
-            backgroundColor: AppColors.error,
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dateFmt = DateFormat('d MMM yyyy');
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-          24, 16, 24, MediaQuery.of(context).viewInsets.bottom + 24),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: AppColors.divider,
-                    borderRadius: BorderRadius.circular(2)),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Add Festival',
-                style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 20),
-            TextFormField(
-              controller: _nameCtrl,
-              decoration: const InputDecoration(
-                  labelText: 'Festival Name *',
-                  prefixIcon: Icon(Icons.celebration_outlined)),
-              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _pickDate(true),
-                    icon: const Icon(Icons.calendar_today, size: 16),
-                    label: Text(_startDate != null
-                        ? dateFmt.format(_startDate!)
-                        : 'Start Date *'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _pickDate(false),
-                    icon: const Icon(Icons.calendar_today, size: 16),
-                    label: Text(_endDate != null
-                        ? dateFmt.format(_endDate!)
-                        : 'End Date *'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text('Advance order days:',
-                    style: TextStyle(fontFamily: 'Poppins', fontSize: 13)),
-                const Spacer(),
-                IconButton(
-                  onPressed: _advanceDays > 7
-                      ? () => setState(() => _advanceDays -= 7)
-                      : null,
-                  icon: const Icon(Icons.remove),
-                  color: AppColors.primary,
-                ),
-                Text('$_advanceDays days',
-                    style: const TextStyle(
-                        fontFamily: 'Poppins', fontWeight: FontWeight.w600)),
-                IconButton(
-                  onPressed: () => setState(() => _advanceDays += 7),
-                  icon: const Icon(Icons.add),
-                  color: AppColors.primary,
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                child: Text(_saving ? 'Saving...' : 'Add Festival'),
               ),
             ),
           ],

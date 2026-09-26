@@ -36,23 +36,32 @@ class ProductModel {
       purchasePrice > 0 ? (margin / purchasePrice) * 100 : 0;
 
   factory ProductModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final purchase = (data['purchasePrice'] ?? data['costPrice'] ?? 0).toDouble();
-    final selling = (data['sellingPrice'] ?? 0).toDouble();
+    if (!doc.exists) {
+      throw Exception('Product document does not exist: ${doc.id}');
+    }
+    
+    final data = doc.data();
+    if (data == null) {
+      throw Exception('Product document data is null: ${doc.id}');
+    }
+    
+    final Map<String, dynamic> productData = data as Map<String, dynamic>;
+    final purchase = (productData['purchasePrice'] ?? productData['costPrice'] ?? 0).toDouble();
+    final selling = (productData['sellingPrice'] ?? 0).toDouble();
     return ProductModel(
       id: doc.id,
-      name: data['name'] ?? '',
-      category: data['category'] ?? '',
-      description: data['description'] ?? '',
+      name: productData['name'] ?? '',
+      category: productData['category'] ?? '',
+      description: productData['description'] ?? '',
       purchasePrice: purchase,
       sellingPrice: selling,
-      unit: data['unit'] ?? 'pcs',
-      barcode: data['barcode'],
-      supplierId: data['supplierId'],
-      imageUrl: data['imageUrl'] ?? data['image'],
-      isActive: data['isActive'] ?? true,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      unit: productData['unit'] ?? 'pcs',
+      barcode: productData['barcode'],
+      supplierId: productData['supplierId'],
+      imageUrl: productData['imageUrl'] ?? productData['image'],
+      isActive: productData['isActive'] ?? true,
+      createdAt: (productData['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      updatedAt: (productData['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 

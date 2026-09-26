@@ -1,13 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum FestivalPhase { upcoming, orderWindow, urgent, ongoing, past }
+
+enum FestivalAlertKind { timeline, stock }
+
 class FestivalModel {
   final String id;
   final String name;
   final DateTime startDate;
   final DateTime endDate;
-  final int advanceOrderDays; // days before festival to place order
+  final int advanceOrderDays;
   final bool isActive;
   final DateTime createdAt;
+  final String? storeId;
+  final String? createdBy;
 
   const FestivalModel({
     required this.id,
@@ -15,22 +21,55 @@ class FestivalModel {
     required this.startDate,
     required this.endDate,
     this.advanceOrderDays = 14,
-    this.isActive = true,  // Default to true
+    this.isActive = true,
     required this.createdAt,
+    this.storeId,
+    this.createdBy,
   });
 
-  bool get isUpcoming => startDate.isAfter(DateTime.now());
-  bool get isOngoing =>
-      DateTime.now().isAfter(startDate) && DateTime.now().isBefore(endDate);
+  DateTime get _today {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day);
+  }
+
+  DateTime get startDay =>
+      DateTime(startDate.year, startDate.month, startDate.day);
+
+  DateTime get endDay => DateTime(endDate.year, endDate.month, endDate.day);
+
+  bool get isUpcoming => startDay.isAfter(_today);
+  bool get isOngoing => !_today.isBefore(startDay) && !_today.isAfter(endDay);
+  bool get isPast => _today.isAfter(endDay);
+
+  int get daysUntilStart => startDay.difference(_today).inDays;
+  int get durationDays {
+    final days = endDay.difference(startDay).inDays;
+    return days < 1 ? 1 : days;
+  }
 
   DateTime get alertDate =>
-      startDate.subtract(Duration(days: advanceOrderDays));
+      startDay.subtract(Duration(days: advanceOrderDays));
 
   bool get needsAlert =>
-      DateTime.now().isAfter(alertDate) && DateTime.now().isBefore(startDate);
+      !_today.isBefore(alertDate) && _today.isBefore(startDay);
+
+  bool get isUrgent => isUpcoming && daysUntilStart <= 7;
+
+  FestivalPhase get phase {
+    if (isPast) return FestivalPhase.past;
+    if (isOngoing) return FestivalPhase.ongoing;
+    if (isUrgent) return FestivalPhase.urgent;
+    if (needsAlert) return FestivalPhase.orderWindow;
+    return FestivalPhase.upcoming;
+  }
+
+  bool get requiresManagerAction =>
+      phase == FestivalPhase.orderWindow ||
+      phase == FestivalPhase.urgent ||
+      phase == FestivalPhase.ongoing;
 
   factory FestivalModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final data = doc.data() as Map<String, dynamic>? ?? {};
     return FestivalModel(
       id: doc.id,
       name: data['name'] ?? '',
@@ -39,6 +78,8 @@ class FestivalModel {
       advanceOrderDays: data['advanceOrderDays'] ?? 14,
       isActive: data['isActive'] ?? true,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      storeId: data['storeId'] as String?,
+      createdBy: data['createdBy'] as String?,
     );
   }
 
@@ -50,6 +91,8 @@ class FestivalModel {
       'advanceOrderDays': advanceOrderDays,
       'isActive': isActive,
       'createdAt': Timestamp.fromDate(createdAt),
+      if (storeId != null) 'storeId': storeId,
+      if (createdBy != null) 'createdBy': createdBy,
     };
   }
 }
@@ -67,6 +110,11 @@ class FestivalDemandAlert {
   final int stockShortfall;
   final bool isAcknowledged;
   final DateTime createdAt;
+  final String kind;
+  final String severity;
+  final String phase;
+  final String message;
+  final String category;
 
   const FestivalDemandAlert({
     required this.id,
@@ -81,10 +129,19 @@ class FestivalDemandAlert {
     required this.stockShortfall,
     this.isAcknowledged = false,
     required this.createdAt,
+    this.kind = 'stock',
+    this.severity = 'warning',
+    this.phase = '',
+    this.message = '',
+    this.category = '',
   });
 
+  FestivalAlertKind get alertKind => kind == 'timeline'
+      ? FestivalAlertKind.timeline
+      : FestivalAlertKind.stock;
+
   factory FestivalDemandAlert.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final data = doc.data() as Map<String, dynamic>? ?? {};
     return FestivalDemandAlert(
       id: doc.id,
       festivalId: data['festivalId'] ?? '',
@@ -98,6 +155,11 @@ class FestivalDemandAlert {
       stockShortfall: data['stockShortfall'] ?? 0,
       isAcknowledged: data['isAcknowledged'] ?? false,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      kind: data['kind'] ?? 'stock',
+      severity: data['severity'] ?? 'warning',
+      phase: data['phase'] ?? '',
+      message: data['message'] ?? '',
+      category: data['category'] ?? '',
     );
   }
 
@@ -114,6 +176,11 @@ class FestivalDemandAlert {
       'stockShortfall': stockShortfall,
       'isAcknowledged': isAcknowledged,
       'createdAt': Timestamp.fromDate(createdAt),
+      'kind': kind,
+      'severity': severity,
+      'phase': phase,
+      'message': message,
+      'category': category,
     };
   }
 }

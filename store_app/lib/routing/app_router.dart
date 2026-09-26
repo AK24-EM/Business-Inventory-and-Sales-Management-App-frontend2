@@ -39,6 +39,7 @@ import '../screens/owner/user_management_screen.dart';
 import '../screens/owner/product_management_screen.dart';
 import '../screens/shared/notifications_screen.dart';
 import '../screens/shared/billing_screen.dart';
+import '../screens/customer/customer_home_screen.dart';
 import '../models/user_model.dart';
 
 class AppRouter {
@@ -81,14 +82,18 @@ class AppRouter {
         // Role-based route guard: prevent an employee from visiting /owner, etc.
         if (isLoggedIn) {
           final role = authProvider.currentUser?.role;
-          if (path.startsWith('/owner') && role != UserRole.owner && role != UserRole.admin) {
+          if (path.startsWith('/owner') &&
+              role != UserRole.owner &&
+              role != UserRole.admin) {
             return _getHomeRoute(role);
           }
           if (path.startsWith('/manager') && role != UserRole.manager) {
             return _getHomeRoute(role);
           }
-          if (path.startsWith('/employee') &&
-              role != UserRole.employee) {
+          if (path.startsWith('/employee') && role != UserRole.employee) {
+            return _getHomeRoute(role);
+          }
+          if (path.startsWith('/customer') && role != UserRole.customer) {
             return _getHomeRoute(role);
           }
         }
@@ -107,6 +112,12 @@ class AppRouter {
         GoRoute(
           path: '/register',
           builder: (context, state) => const RegisterScreen(),
+        ),
+
+        // ── Customer Routes ──────────────────────────────────────────────
+        GoRoute(
+          path: '/customer',
+          builder: (context, state) => const CustomerHomeScreen(),
         ),
 
         // ── Employee Routes ──────────────────────────────────────────────
@@ -182,7 +193,20 @@ class AppRouter {
             ),
             GoRoute(
               path: '/manager/purchase-orders',
-              builder: (context, state) => const PurchaseOrderScreen(),
+              builder: (context, state) {
+                List<Map<String, dynamic>>? prefilled;
+                final extra = state.extra;
+                if (extra is Map) {
+                  final raw = extra['prefilledItems'];
+                  if (raw is List) {
+                    prefilled = raw
+                        .whereType<Map>()
+                        .map((e) => Map<String, dynamic>.from(e))
+                        .toList();
+                  }
+                }
+                return PurchaseOrderScreen(prefilledItems: prefilled);
+              },
             ),
             GoRoute(
               path: '/manager/customer-analytics',
@@ -282,16 +306,6 @@ class AppRouter {
   }
 
   static String _getHomeRoute(UserRole? role) {
-    switch (role) {
-      case UserRole.owner:
-      case UserRole.admin:
-        return '/owner';
-      case UserRole.manager:
-        return '/manager';
-      case UserRole.employee:
-        return '/employee';
-      default:
-        return '/login';
-    }
+    return role?.homeRoute ?? '/login';
   }
 }

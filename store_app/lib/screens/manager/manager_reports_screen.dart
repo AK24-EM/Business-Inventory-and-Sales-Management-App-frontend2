@@ -106,7 +106,7 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
                 ),
 
                 // 1b. Blue Gradient Analytics Banner
-                _buildReportsBanner(currentSummary, isLive: bundle != null),
+                _buildReportsBanner(currentSummary, store, bundle, isLive: bundle != null),
 
                 // 2. Filter & Tabs Bar
                 Container(
@@ -232,7 +232,7 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
   }
 
   // ── Blue Gradient Analytics Banner ──
-  Widget _buildReportsBanner(SalesSummary? summary, {bool isLive = false}) {
+  Widget _buildReportsBanner(SalesSummary? summary, dynamic store, AnalyticsBundle? bundle, {bool isLive = false}) {
     final now = DateTime.now();
     final hour = now.hour;
     final greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -317,12 +317,8 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
                   ],
                 ),
               ),
-              InkWell(
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Generating PDF report...'), behavior: SnackBarBehavior.floating, backgroundColor: Color(0xFF2563EB)),
-                ),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
+              PopupMenuButton<String>(
+                icon: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
                   child: const Row(
@@ -334,6 +330,33 @@ class _ManagerReportsScreenState extends State<ManagerReportsScreen>
                     ],
                   ),
                 ),
+                onSelected: (format) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Export as ${format.toUpperCase()} - Coming soon!')),
+                  );
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'pdf',
+                    child: Row(
+                      children: [
+                        Icon(Icons.picture_as_pdf, size: 18, color: Color(0xFFEF4444)),
+                        SizedBox(width: 12),
+                        Text('Export as PDF'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'csv',
+                    child: Row(
+                      children: [
+                        Icon(Icons.table_chart, size: 18, color: Color(0xFF10B981)),
+                        SizedBox(width: 12),
+                        Text('Export as CSV'),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

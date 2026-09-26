@@ -24,17 +24,26 @@ class StoreModel {
   });
 
   factory StoreModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    if (!doc.exists) {
+      throw Exception('Store document does not exist: ${doc.id}');
+    }
+    
+    final data = doc.data();
+    if (data == null) {
+      throw Exception('Store document data is null: ${doc.id}');
+    }
+    
+    final Map<String, dynamic> storeData = data as Map<String, dynamic>;
     return StoreModel(
       id: doc.id,
-      name: data['name'] ?? '',
-      address: data['address'] ?? '',
-      city: data['city'] ?? '',
-      phone: data['phone'] ?? '',
-      email: data['email'] ?? '',
-      managerId: data['managerId'] ?? '',
-      isActive: data['isActive'] ?? true,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      name: storeData['name'] ?? '',
+      address: storeData['address'] ?? '',
+      city: storeData['city'] ?? '',
+      phone: storeData['phone'] ?? '',
+      email: storeData['email'] ?? '',
+      managerId: storeData['managerId'] ?? '',
+      isActive: storeData['isActive'] ?? true,
+      createdAt: (storeData['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 

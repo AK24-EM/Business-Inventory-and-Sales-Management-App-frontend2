@@ -48,7 +48,9 @@ class PurchaseOrderItem {
     return PurchaseOrderItem(
       productId: map['productId'] as String,
       productName: map['productName'] as String,
-      quantity: map['quantity'] as int,
+      quantity: (map['quantity'] as num?)?.toInt() ??
+          (map['orderedQuantity'] as num?)?.toInt() ??
+          0,
       unitPrice: (map['unitPrice'] as num).toDouble(),
       totalPrice: (map['totalPrice'] as num).toDouble(),
       notes: map['notes'] as String?,

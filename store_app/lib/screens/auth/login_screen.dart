@@ -5,6 +5,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/store_provider.dart';
 import '../../config/app_theme.dart';
 import '../../config/app_constants.dart';
+import '../../models/user_model.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,8 +16,8 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailCtrl = TextEditingController(text: 'owner@demo.com');
-  final _passCtrl = TextEditingController(text: 'demo123');
+  final _emailCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
   bool _obscurePass = true;
   bool _rememberMe = true;
   String _selectedRolePreset = 'owner';
@@ -42,21 +43,12 @@ class _LoginScreenState extends State<LoginScreen> {
     final storeProvider = context.read<StoreProvider>();
     final success = await auth.signIn(_emailCtrl.text, _passCtrl.text);
     if (success && mounted) {
-      // Pre-fetch stores in the background immediately after sign-in so the
-      // dashboard's data load doesn't have to wait for it.
-      storeProvider.loadStores().catchError((_) {});
-
-      switch (auth.currentUser?.role.name) {
-        case 'owner':
-        case 'admin':
-          context.go('/owner');
-          break;
-        case 'manager':
-          context.go('/manager');
-          break;
-        default:
-          context.go('/employee');
+      // Role from Firestore/GCP decides the landing route (shared login).
+      final role = auth.currentUser?.role;
+      if (role != null && role.isStaff) {
+        storeProvider.loadStores().catchError((_) {});
       }
+      context.go(role?.homeRoute ?? '/login');
     }
   }
 
@@ -389,7 +381,7 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'Sign In to StoreIQ',
+                  'Sign In',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 20,
@@ -400,7 +392,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Select your role or enter store credentials',
+                  'One login for customers, managers, and employees. Your account role opens the right dashboard.',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 13,
@@ -409,9 +401,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // Quick Demo Account Selector Chips
+                // Demo staff credentials (owner-assigned accounts)
                 const Text(
-                  'QUICK DEMO ACCOUNTS',
+                  'DEMO STAFF CREDENTIALS',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 11,
@@ -426,7 +418,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Expanded(
                       child: _buildRoleChip(
                         role: 'owner',
-                        title: '👑 Owner',
+                        title: 'Owner',
                         email: 'owner@demo.com',
                         pass: 'demo123',
                       ),
@@ -435,7 +427,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Expanded(
                       child: _buildRoleChip(
                         role: 'manager',
-                        title: '🏢 Manager',
+                        title: 'Manager',
                         email: 'manager@demo.com',
                         pass: 'demo123',
                       ),
@@ -444,7 +436,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Expanded(
                       child: _buildRoleChip(
                         role: 'employee',
-                        title: '🛒 Cashier',
+                        title: 'Employee',
                         email: 'employee@demo.com',
                         pass: 'demo123',
                       ),
@@ -496,7 +488,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     color: AppColors.textPrimary,
                   ),
                   decoration: const InputDecoration(
-                    labelText: 'Work Email Address',
+                    labelText: 'Email Address',
                     prefixIcon:
                         Icon(Icons.email_outlined, color: AppColors.textSecondary),
                   ),
@@ -602,7 +594,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           )
                         : const Text(
-                            'Sign In to Dashboard',
+                            'Sign In',
                             style: TextStyle(
                               fontFamily: 'Poppins',
                               fontSize: 14,
@@ -614,12 +606,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Register link
+                // Customer register link
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Text(
-                      "Don't have an account? ",
+                      'New customer? ',
                       style: TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 13,
@@ -634,7 +626,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                       child: const Text(
-                        'Register',
+                        'Create account',
                         style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 13,
@@ -645,9 +637,18 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Managers & employees: use the email and password assigned by your owner.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
                 const SizedBox(height: 16),
 
-                // Footer security disclaimer
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: const [
@@ -655,7 +656,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         size: 14, color: AppColors.textTertiary),
                     SizedBox(width: 6),
                     Text(
-                      'Role-based access & JWT verified session',
+                      'Role from GCP · live Firestore sync',
                       style: TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 11,

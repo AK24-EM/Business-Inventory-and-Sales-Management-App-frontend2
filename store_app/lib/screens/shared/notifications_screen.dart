@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import '../../config/app_theme.dart';
 import '../../config/app_constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/notification_model.dart';
+import '../../models/user_model.dart';
 import '../../services/notification_service.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -353,6 +355,8 @@ class _NotificationCard extends StatelessWidget {
         return AppColors.info;
       case NotificationType.customerRegistered:
         return AppColors.primary;
+      case NotificationType.festival:
+        return const Color(0xFFEA580C);
       case NotificationType.custom:
         return AppColors.accent;
     }
@@ -368,6 +372,8 @@ class _NotificationCard extends StatelessWidget {
         return Icons.swap_horiz_rounded;
       case NotificationType.customerRegistered:
         return Icons.person_add_outlined;
+      case NotificationType.festival:
+        return Icons.celebration_rounded;
       case NotificationType.custom:
         return Icons.notifications_outlined;
     }
@@ -612,6 +618,8 @@ class _NotificationCard extends StatelessWidget {
         return 'TRANSFER';
       case NotificationType.customerRegistered:
         return 'CUSTOMER';
+      case NotificationType.festival:
+        return 'FESTIVAL';
       case NotificationType.custom:
         return 'INFO';
     }
@@ -637,6 +645,16 @@ class _NotificationCard extends StatelessWidget {
         break;
       case NotificationType.customerRegistered:
         // Navigate to customer details
+        break;
+      case NotificationType.festival:
+        final role = Provider.of<AuthProvider>(context, listen: false)
+            .currentUser
+            ?.role;
+        if (role == UserRole.manager) {
+          context.go('/manager/festivals');
+        } else if (role == UserRole.owner || role == UserRole.admin) {
+          context.go('/owner/festivals');
+        }
         break;
       case NotificationType.custom:
         // Show details or do nothing

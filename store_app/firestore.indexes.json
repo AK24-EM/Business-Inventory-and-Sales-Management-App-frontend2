@@ -113,6 +113,31 @@
         { "fieldPath": "registeredStoreId", "order": "ASCENDING" },
         { "fieldPath": "registeredAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "festivals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isActive", "order": "ASCENDING" },
+        { "fieldPath": "startDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "festivalAlerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isAcknowledged", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "festivalAlerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "storeId", "order": "ASCENDING" },
+        { "fieldPath": "isAcknowledged", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -38,14 +38,17 @@ void main() {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    // ─── Firestore Web: Disable offline persistence ────────────────────────
-    // Offline persistence is not supported on web without IndexedDB multi-tab
-    // configuration. Disabling it prevents the b815/ca9 WatchChangeAggregator
-    // assertion crash in Firebase JS SDK 11.x on WebSocket reconnects.
+    // Firestore web uses Chrome HTTP/3 (QUIC) for the Listen channel by default.
+    // That path fails with net::ERR_QUIC_PROTOCOL_ERROR.QUIC_TOO_MANY_RTOS on
+    // some networks. Force long-polling (HTTP/1.1/2) and skip IndexedDB cache.
     if (kIsWeb) {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: false,
         sslEnabled: true,
+        webExperimentalForceLongPolling: true,
+        webExperimentalLongPollingOptions: WebExperimentalLongPollingOptions(
+          timeoutDuration: Duration(seconds: 25),
+        ),
       );
     }
     // ────────────────────────────────────────────────────────────────────────

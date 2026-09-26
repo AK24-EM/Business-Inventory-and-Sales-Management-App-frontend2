@@ -76,6 +76,7 @@ class SupplierModel {
 
 class PurchaseOrder {
   final String id;
+  final String poNumber;
   final String supplierId;
   final String supplierName;
   final List<PurchaseOrderItem> items;
@@ -87,9 +88,11 @@ class PurchaseOrder {
   final DateTime? expectedDeliveryDate;
   final String? notes;
   final String targetStoreId;
+  final String storeName;
 
   const PurchaseOrder({
     required this.id,
+    this.poNumber = '',
     required this.supplierId,
     required this.supplierName,
     required this.items,
@@ -101,12 +104,15 @@ class PurchaseOrder {
     this.expectedDeliveryDate,
     this.notes,
     required this.targetStoreId,
+    this.storeName = '',
   });
 
   factory PurchaseOrder.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    final rawStatus = (data['status'] ?? 'draft').toString();
     return PurchaseOrder(
       id: doc.id,
+      poNumber: data['poNumber'] ?? '',
       supplierId: data['supplierId'] ?? '',
       supplierName: data['supplierName'] ?? '',
       items: (data['items'] as List<dynamic>?)
@@ -114,27 +120,48 @@ class PurchaseOrder {
               .toList() ??
           [],
       totalAmount: (data['totalAmount'] ?? 0).toDouble(),
-      status: PurchaseOrderStatus.values.firstWhere(
-        (e) => e.name == (data['status'] ?? 'draft'),
-        orElse: () => PurchaseOrderStatus.draft,
-      ),
-      createdByUserId: data['createdByUserId'] ?? '',
-      createdByUserName: data['createdByUserName'] ?? '',
+      status: _parseStatus(rawStatus),
+      createdByUserId: data['createdByUserId'] ?? data['createdBy'] ?? '',
+      createdByUserName:
+          data['createdByUserName'] ?? data['createdByName'] ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       expectedDeliveryDate:
           (data['expectedDeliveryDate'] as Timestamp?)?.toDate(),
       notes: data['notes'],
-      targetStoreId: data['targetStoreId'] ?? '',
+      targetStoreId: data['targetStoreId'] ?? data['storeId'] ?? '',
+      storeName: data['storeName'] ?? '',
     );
+  }
+
+  static PurchaseOrderStatus _parseStatus(String raw) {
+    switch (raw) {
+      case 'submitted':
+      case 'approved':
+      case 'inTransit':
+      case 'sent':
+        return PurchaseOrderStatus.sent;
+      case 'received':
+        return PurchaseOrderStatus.received;
+      case 'partiallyReceived':
+        return PurchaseOrderStatus.partiallyReceived;
+      case 'cancelled':
+      case 'rejected':
+        return PurchaseOrderStatus.cancelled;
+      default:
+        return PurchaseOrderStatus.draft;
+    }
   }
 
   Map<String, dynamic> toFirestore() {
     return {
+      'poNumber': poNumber,
       'supplierId': supplierId,
       'supplierName': supplierName,
       'items': items.map((e) => e.toMap()).toList(),
       'totalAmount': totalAmount,
       'status': status.name,
+      'createdBy': createdByUserId,
+      'createdByName': createdByUserName,
       'createdByUserId': createdByUserId,
       'createdByUserName': createdByUserName,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -142,7 +169,9 @@ class PurchaseOrder {
           ? Timestamp.fromDate(expectedDeliveryDate!)
           : null,
       'notes': notes,
+      'storeId': targetStoreId,
       'targetStoreId': targetStoreId,
+      'storeName': storeName,
     };
   }
 }
@@ -165,11 +194,19 @@ class PurchaseOrderItem {
   });
 
   factory PurchaseOrderItem.fromMap(Map<String, dynamic> data) {
+    int asInt(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse('$value') ?? 0;
+    }
+
     return PurchaseOrderItem(
       productId: data['productId'] ?? '',
       productName: data['productName'] ?? '',
-      orderedQuantity: data['orderedQuantity'] ?? 0,
-      receivedQuantity: data['receivedQuantity'],
+      orderedQuantity: asInt(data['orderedQuantity'] ?? data['quantity']),
+      receivedQuantity: data['receivedQuantity'] == null
+          ? null
+          : asInt(data['receivedQuantity']),
       unitPrice: (data['unitPrice'] ?? 0).toDouble(),
       totalPrice: (data['totalPrice'] ?? 0).toDouble(),
     );
@@ -179,6 +216,7 @@ class PurchaseOrderItem {
     return {
       'productId': productId,
       'productName': productName,
+      'quantity': orderedQuantity,
       'orderedQuantity': orderedQuantity,
       'receivedQuantity': receivedQuantity,
       'unitPrice': unitPrice,

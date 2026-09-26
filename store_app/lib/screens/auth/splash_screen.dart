@@ -71,9 +71,9 @@ class _SplashScreenState extends State<SplashScreen>
     // Using replace so the user cannot navigate back to the splash.
     final role = auth.currentUser?.role;
     if (auth.isAuthenticated) {
-      // Pre-fetch stores in the background so the dashboard doesn't have to
-      // wait for them. This runs in parallel with the page transition.
-      context.read<StoreProvider>().loadStores().catchError((_) {});
+      if (role != null && role.isStaff) {
+        context.read<StoreProvider>().loadStores().catchError((_) {});
+      }
       context.go(_homeRoute(role));
     } else {
       context.go('/login');
@@ -97,15 +97,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   String _homeRoute(UserRole? role) {
-    switch (role) {
-      case UserRole.owner:
-      case UserRole.admin:
-        return '/owner';
-      case UserRole.manager:
-        return '/manager';
-      default:
-        return '/employee';
-    }
+    return role?.homeRoute ?? '/login';
   }
 
   @override

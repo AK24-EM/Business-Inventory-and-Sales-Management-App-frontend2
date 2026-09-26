@@ -5,6 +5,9 @@ import '../../providers/auth_provider.dart';
 import '../../models/user_model.dart';
 import '../../config/app_theme.dart';
 
+/// Customer-only self-registration.
+/// Managers and employees cannot register here — the owner assigns their
+/// email/password in User Management (synced via GCP Cloud Functions).
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -22,7 +25,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _obscurePass = true;
   bool _obscureConfirm = true;
   bool _agreeToTerms = false;
-  String _selectedRole = 'owner'; // Default role
 
   @override
   void dispose() {
@@ -44,46 +46,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     final auth = context.read<AuthProvider>();
-    
-    // Map string role to UserRole enum
-    UserRole role = UserRole.owner;
-    switch (_selectedRole) {
-      case 'owner':
-        role = UserRole.owner;
-        break;
-      case 'admin':
-        role = UserRole.admin;
-        break;
-      case 'manager':
-        role = UserRole.manager;
-        break;
-      case 'employee':
-        role = UserRole.employee;
-        break;
-    }
-
     final success = await auth.register(
       email: _emailCtrl.text.trim(),
       password: _passCtrl.text,
       name: _nameCtrl.text.trim(),
       phone: _phoneCtrl.text.trim(),
-      role: role,
     );
 
     if (success && mounted) {
-      // Route based on selected role
-      switch (_selectedRole) {
-        case 'owner':
-        case 'admin':
-          context.go('/owner');
-          break;
-        case 'manager':
-          context.go('/manager');
-          break;
-        case 'employee':
-          context.go('/employee');
-          break;
-      }
+      // GoRouter redirect uses Firestore role (customer → /customer).
+      final home = auth.currentUser?.role.homeRoute ?? '/customer';
+      context.go(home);
     } else if (mounted && auth.errorMessage != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(auth.errorMessage!)),
@@ -120,27 +93,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Logo
-          Icon(Icons.store, size: 72, color: AppColors.primary),
+          Icon(Icons.person_add_alt_1_rounded, size: 72, color: AppColors.primary),
           const SizedBox(height: 16),
           Text(
-            'Create Account',
+            'Create Customer Account',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 28,
+              fontSize: 26,
               fontWeight: FontWeight.bold,
               color: AppColors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Register as a store owner',
+            'For shoppers only. Store staff use the credentials assigned by the owner.',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, color: AppColors.textSecondary),
+            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 32),
 
-          // Name field
           TextFormField(
             controller: _nameCtrl,
             decoration: InputDecoration(
@@ -155,63 +126,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Role selector
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Select Role',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildRoleOption(
-                      role: 'owner',
-                      icon: Icons.business,
-                      label: 'Owner',
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildRoleOption(
-                      role: 'admin',
-                      icon: Icons.admin_panel_settings,
-                      label: 'Admin',
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildRoleOption(
-                      role: 'manager',
-                      icon: Icons.manage_accounts,
-                      label: 'Manager',
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildRoleOption(
-                      role: 'employee',
-                      icon: Icons.person,
-                      label: 'Employee',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Email field
           TextFormField(
             controller: _emailCtrl,
             keyboardType: TextInputType.emailAddress,
@@ -230,7 +144,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Phone field
           TextFormField(
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
@@ -249,7 +162,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Password field
           TextFormField(
             controller: _passCtrl,
             obscureText: _obscurePass,
@@ -272,7 +184,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Confirm password field
           TextFormField(
             controller: _confirmPassCtrl,
             obscureText: _obscureConfirm,
@@ -280,8 +191,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
               labelText: 'Confirm Password',
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
-                icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility),
-                onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+                icon: Icon(
+                    _obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                onPressed: () =>
+                    setState(() => _obscureConfirm = !_obscureConfirm),
               ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -295,7 +208,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Terms checkbox
           Row(
             children: [
               Checkbox(
@@ -312,7 +224,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 24),
 
-          // Register button
           ElevatedButton(
             onPressed: auth.isLoading ? null : _register,
             style: ElevatedButton.styleFrom(
@@ -332,11 +243,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       valueColor: AlwaysStoppedAnimation(Colors.white),
                     ),
                   )
-                : const Text('Create Account', style: TextStyle(fontSize: 16)),
+                : const Text('Create Customer Account',
+                    style: TextStyle(fontSize: 16)),
           ),
           const SizedBox(height: 16),
 
-          // Sign in link
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -350,48 +261,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRoleOption({
-    required String role,
-    required IconData icon,
-    required String label,
-  }) {
-    final isSelected = _selectedRole == role;
-    return InkWell(
-      onTap: () => setState(() => _selectedRole = role),
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary.withOpacity(0.1) : Colors.grey[100],
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected ? AppColors.primary : Colors.grey[300]!,
-            width: isSelected ? 2 : 1,
+          const SizedBox(height: 8),
+          Text(
+            'Store managers & employees: sign in with the email and password your owner assigned.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textTertiary,
+            ),
           ),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              icon,
-              color: isSelected ? AppColors.primary : Colors.grey[600],
-              size: 28,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected ? AppColors.primary : Colors.grey[700],
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }

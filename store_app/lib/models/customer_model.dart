@@ -24,18 +24,27 @@ class CustomerModel {
   });
 
   factory CustomerModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    if (!doc.exists) {
+      throw Exception('Customer document does not exist: ${doc.id}');
+    }
+    
+    final data = doc.data();
+    if (data == null) {
+      throw Exception('Customer document data is null: ${doc.id}');
+    }
+    
+    final Map<String, dynamic> customerData = data as Map<String, dynamic>;
     return CustomerModel(
       id: doc.id,
-      name: data['name'] ?? '',
-      phone: data['phone'] ?? '',
-      email: data['email'],
-      address: data['address'],
+      name: customerData['name'] ?? '',
+      phone: customerData['phone'] ?? '',
+      email: customerData['email'],
+      address: customerData['address'],
       registeredAt:
-          (data['registeredAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      registeredStoreId: data['registeredStoreId'] ?? '',
-      registeredByUserId: data['registeredByUserId'] ?? '',
-      isActive: data['isActive'] ?? true,
+          (customerData['registeredAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      registeredStoreId: customerData['registeredStoreId'] ?? '',
+      registeredByUserId: customerData['registeredByUserId'] ?? '',
+      isActive: customerData['isActive'] ?? true,
     );
   }
 
@@ -95,17 +104,26 @@ class LoyaltyAccount {
   });
 
   factory LoyaltyAccount.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    if (!doc.exists) {
+      throw Exception('Loyalty account document does not exist: ${doc.id}');
+    }
+    
+    final data = doc.data();
+    if (data == null) {
+      throw Exception('Loyalty account document data is null: ${doc.id}');
+    }
+    
+    final Map<String, dynamic> loyaltyData = data as Map<String, dynamic>;
     return LoyaltyAccount(
       id: doc.id,
-      primaryCustomerId: data['primaryCustomerId'] ?? '',
-      phone: data['phone'] ?? '',
-      totalPoints: data['totalPoints'] ?? 0,
-      redeemedPoints: data['redeemedPoints'] ?? 0,
-      availablePoints: data['availablePoints'] ?? 0,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      primaryCustomerId: loyaltyData['primaryCustomerId'] ?? '',
+      phone: loyaltyData['phone'] ?? '',
+      totalPoints: loyaltyData['totalPoints'] ?? 0,
+      redeemedPoints: loyaltyData['redeemedPoints'] ?? 0,
+      availablePoints: loyaltyData['availablePoints'] ?? 0,
+      createdAt: (loyaltyData['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       lastActivity:
-          (data['lastActivity'] as Timestamp?)?.toDate() ?? DateTime.now(),
+          (loyaltyData['lastActivity'] as Timestamp?)?.toDate() ?? DateTime.now(),
     );
   }
 
@@ -156,26 +174,35 @@ class LoyaltyTransaction {
   });
 
   factory LoyaltyTransaction.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    if (!doc.exists) {
+      throw Exception('Loyalty transaction document does not exist: ${doc.id}');
+    }
+    
+    final data = doc.data();
+    if (data == null) {
+      throw Exception('Loyalty transaction document data is null: ${doc.id}');
+    }
+    
+    final Map<String, dynamic> txData = data as Map<String, dynamic>;
     return LoyaltyTransaction(
       id: doc.id,
-      loyaltyAccountId: data['loyaltyAccountId'] ?? '',
-      phone: data['phone'] ?? '',
-      customerId: data['customerId'],
-      customerName: data['customerName'],
+      loyaltyAccountId: txData['loyaltyAccountId'] ?? '',
+      phone: txData['phone'] ?? '',
+      customerId: txData['customerId'],
+      customerName: txData['customerName'],
       type: LoyaltyTransactionType.values.firstWhere(
-        (e) => e.name == (data['type'] ?? 'earn'),
+        (e) => e.name == (txData['type'] ?? 'earn'),
         orElse: () => LoyaltyTransactionType.earn,
       ),
-      points: data['points'] ?? 0,
-      saleId: data['saleId'],
-      storeId: data['storeId'] ?? '',
-      storeName: data['storeName'] ?? '',
-      processedByUserId: data['processedByUserId'] ?? '',
-      processedByUserName: data['processedByUserName'] ?? '',
+      points: txData['points'] ?? 0,
+      saleId: txData['saleId'],
+      storeId: txData['storeId'] ?? '',
+      storeName: txData['storeName'] ?? '',
+      processedByUserId: txData['processedByUserId'] ?? '',
+      processedByUserName: txData['processedByUserName'] ?? '',
       timestamp:
-          (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      notes: data['notes'],
+          (txData['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      notes: txData['notes'],
     );
   }
 

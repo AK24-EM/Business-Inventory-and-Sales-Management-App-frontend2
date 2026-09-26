@@ -82,9 +82,12 @@ async function setCustomClaims() {
         // Verify user exists in Firebase Auth
         const userRecord = await auth.getUser(uid);
         
+        const storeId = userData.assignedStoreId || userData.storeId || null;
         const customClaims = {
           role: userData.role || 'employee',
-          storeId: userData.assignedStoreId || null
+          assignedStoreId: storeId,
+          storeId: storeId,
+          storeAccess: (userData.role === 'owner' || userData.role === 'admin') ? 'all' : (storeId || ''),
         };
         
         // Set custom claims

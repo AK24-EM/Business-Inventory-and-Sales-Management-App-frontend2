@@ -16,7 +16,7 @@ class UserCreate(BaseModel):
     email: str
     phone: str
     password: str
-    role: UserRole = UserRole.employee
+    role: UserRole = UserRole.customer
     assigned_store_id: Optional[str] = None
 
 class UserLogin(BaseModel):

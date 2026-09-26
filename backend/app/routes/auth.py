@@ -211,13 +211,15 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # Public register is customer-only. Manager/employee accounts are
+    # assigned by the owner through Firebase Cloud Functions.
     user = User(
         name=user_in.name,
         email=user_in.email,
         phone=user_in.phone,
         hashed_password=get_password_hash(user_in.password),
-        role=user_in.role,
-        assigned_store_id=user_in.assigned_store_id,
+        role=UserRole.customer,
+        assigned_store_id=None,
     )
     db.add(user)
     db.commit()

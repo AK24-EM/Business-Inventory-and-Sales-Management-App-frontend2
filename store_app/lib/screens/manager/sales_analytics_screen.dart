@@ -91,6 +91,18 @@ class _SalesAnalyticsScreenState extends State<SalesAnalyticsScreen>
       appBar: AppBar(
         title: const Text('Sales Analytics'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Export Data (Coming Soon)',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Export functionality coming soon!'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 14),
             child: Center(

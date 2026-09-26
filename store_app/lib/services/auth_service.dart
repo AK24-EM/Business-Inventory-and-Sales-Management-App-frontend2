@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_model.dart';
@@ -8,18 +9,26 @@ import 'token_service.dart';
 /// AuthService wraps Firebase Authentication and Cloud Firestore to implement
 /// secure, role-based authentication as required by Feature 1 (BR-01).
 ///
-/// Auth is Firebase Auth + a Firestore user document (role, store, isActive).
+/// Auth flow:
+///   - Register → customers only (self-service)
+///   - Login → shared for all roles; landing is decided from Firestore `role`
+///   - Manager / employee accounts → created by owner via Cloud Function
+///   - Real-time: Firestore `users/{uid}` snapshot keeps role/isActive in sync
 class AuthService {
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions =
+      FirebaseFunctions.instanceFor(region: 'asia-south1');
   final TokenService _tokenService = TokenService();
 
   final _userController = StreamController<UserModel?>.broadcast();
   UserModel? _currentUser;
   StreamSubscription<User?>? _firebaseAuthSub;
+  StreamSubscription<DocumentSnapshot>? _userDocSub;
 
   AuthService() {
-    _firebaseAuthSub = _firebaseAuth.authStateChanges().listen(_onFirebaseAuthStateChanged);
+    _firebaseAuthSub =
+        _firebaseAuth.authStateChanges().listen(_onFirebaseAuthStateChanged);
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -28,8 +37,8 @@ class AuthService {
   UserModel? get currentUser => _currentUser;
 
   /// Sign in with email + password via Firebase Authentication.
+  /// Role / home route come from the Firestore user document (GCP source of truth).
   Future<UserModel?> signIn(String email, String password) async {
-    // 1. Firebase Auth sign-in
     final credential = await _firebaseAuth.signInWithEmailAndPassword(
       email: email.trim(),
       password: password,
@@ -37,7 +46,6 @@ class AuthService {
     final user = credential.user;
     if (user == null) throw Exception('sign-in-failed');
 
-    // 2. Fetch Firestore user record (role, isActive, assignedStoreId, etc.)
     final model = await _fetchUserModel(user);
     if (model == null) throw Exception('user-record-not-found');
     if (!model.isActive) {
@@ -45,41 +53,30 @@ class AuthService {
       throw Exception('user-disabled');
     }
 
-    // 3. Force-refresh the Firebase ID token so custom claims are present
-    //    before any Firestore rule evaluation or Cloud Run REST call.
     try {
       await user.getIdToken(true);
-      
-      // DEBUG: Check if custom claims are present
       final tokenResult = await user.getIdTokenResult(true);
-      print('🔑 DEBUG: Token claims for ${model.email}:');
-      print('   Role: ${tokenResult.claims?['role']}');
-      print('   StoreId: ${tokenResult.claims?['storeId']}');
-      
       if (tokenResult.claims?['role'] == null) {
-        print('⚠️  WARNING: Custom claims not set! Run: node set_custom_claims.js');
-        print('⚠️  Then sign out and sign in again.');
+        // Claims sync via onUserWritten Cloud Function; next refresh picks them up.
       }
-    } catch (e) {
-      print('❌ Error checking token claims: $e');
-    }
+    } catch (_) {}
 
     _updateLastLogin(user.uid);
+    _attachUserDocListener(user.uid);
+    _currentUser = model;
     _userController.add(model);
     return model;
   }
 
-  /// Register a new user — creates both Firebase Auth and backend database user.
-  /// This is for self-service registration (e.g., store owners signing up).
+  /// Customer self-registration only. Staff (manager/employee) must be created
+  /// by the owner through User Management → Cloud Function `createUser`.
   Future<UserModel?> register({
     required String email,
     required String password,
     required String name,
     required String phone,
-    UserRole role = UserRole.owner, // Default to owner for self-registration
   }) async {
     try {
-      // 1. Create Firebase Auth account
       final credential = await _firebaseAuth.createUserWithEmailAndPassword(
         email: email.trim(),
         password: password,
@@ -87,18 +84,16 @@ class AuthService {
       final user = credential.user;
       if (user == null) throw Exception('registration-failed');
 
-      // 3. Update Firebase display name
       await user.updateDisplayName(name.trim());
 
-      // 4. Create Firestore user document
       final now = DateTime.now();
       final userModel = UserModel(
         id: user.uid,
         name: name.trim(),
         email: email.trim(),
         phone: phone.trim(),
-        role: role,
-        assignedStoreId: null, // Self-registered users have no store assignment yet
+        role: UserRole.customer,
+        assignedStoreId: null,
         isActive: true,
         createdAt: now,
       );
@@ -108,14 +103,13 @@ class AuthService {
           .doc(user.uid)
           .set(userModel.toFirestore());
 
-      // Wait a moment to ensure Firestore write completes before auth state changes
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // 5. Force-refresh Firebase ID token
+      // Give Cloud Function `onUserWritten` a moment to set JWT claims.
+      await Future.delayed(const Duration(milliseconds: 400));
       try {
         await user.getIdToken(true);
       } catch (_) {}
 
+      _attachUserDocListener(user.uid);
       _currentUser = userModel;
       _userController.add(userModel);
       return userModel;
@@ -126,20 +120,19 @@ class AuthService {
     }
   }
 
-  /// Sign out from Firebase and clear all stored tokens.
   Future<void> signOut() async {
+    await _userDocSub?.cancel();
+    _userDocSub = null;
     await _firebaseAuth.signOut();
     await _tokenService.clearToken();
     _currentUser = null;
     _userController.add(null);
   }
 
-  /// Send a Firebase password-reset email.
   Future<void> resetPassword(String email) async {
     await _firebaseAuth.sendPasswordResetEmail(email: email.trim());
   }
 
-  /// Fetch the current user's profile from Firestore (e.g. after token refresh).
   Future<UserModel?> getUserById(String uid) async {
     if (_currentUser != null && _currentUser!.id == uid) return _currentUser;
     final firebaseUser = _firebaseAuth.currentUser;
@@ -147,22 +140,17 @@ class AuthService {
     return _fetchUserModel(firebaseUser);
   }
 
-  /// Get the current Firebase ID token (JWT) for use in REST API calls.
-  /// Pass [forceRefresh] = true to always get a fresh token with latest claims.
   Future<String?> getIdToken({bool forceRefresh = false}) async {
     return _firebaseAuth.currentUser?.getIdToken(forceRefresh);
   }
 
-  /// Read custom claims from the current ID token.
-  /// Claims are set server-side by the `setUserClaims` Cloud Function.
   Future<Map<String, dynamic>> getCustomClaims() async {
     final result = await _firebaseAuth.currentUser?.getIdTokenResult(true);
     return result?.claims ?? {};
   }
 
-  // ── User Management (called by UserManagementScreen / Admin ops) ──────────
+  // ── User Management (owner/admin via Cloud Functions) ─────────────────────
 
-  /// List all users. Owner/Admin only — enforced by Firestore rules.
   Stream<List<UserModel>> getUsersStream({String? storeId}) {
     Query<Map<String, dynamic>> query =
         _firestore.collection(AppConstants.usersCollection);
@@ -190,7 +178,8 @@ class AuthService {
     return getUsers(storeId: storeId);
   }
 
-  /// Create a new user.
+  /// Create manager/employee via GCP Cloud Function (Admin SDK).
+  /// Does not disturb the owner's session; sets Auth + Firestore + JWT claims.
   Future<UserModel> createUser({
     required String email,
     required String password,
@@ -199,45 +188,54 @@ class AuthService {
     required UserRole role,
     String? assignedStoreId,
   }) async {
+    if (!role.isOwnerAssignable) {
+      throw Exception(
+          'Only manager or employee accounts can be assigned by the owner.');
+    }
+
     try {
-      final uid = await _createAuthUserAndRestoreSession(email, password);
+      final callable = _functions.httpsCallable('createUser');
+      final result = await callable.call(<String, dynamic>{
+        'email': email.trim(),
+        'password': password,
+        'name': name.trim(),
+        'phone': phone.trim(),
+        'role': role.name,
+        'assignedStoreId': assignedStoreId,
+      });
 
-      final now = DateTime.now();
-      final userModel = UserModel(
+      final data = Map<String, dynamic>.from(result.data as Map);
+      final uid = data['uid'] as String;
+      return UserModel(
         id: uid,
-        name: name.trim(),
-        email: email.trim(),
+        name: data['name'] as String? ?? name.trim(),
+        email: data['email'] as String? ?? email.trim(),
         phone: phone.trim(),
-        role: role,
-        assignedStoreId: (role == UserRole.owner || role == UserRole.admin)
-            ? null
-            : assignedStoreId,
+        role: UserRoleExtension.fromString(data['role'] as String? ?? role.name),
+        assignedStoreId: data['assignedStoreId'] as String? ?? assignedStoreId,
         isActive: true,
-        createdAt: now,
+        createdAt: DateTime.now(),
       );
-
-      // Write the Firestore user document (rules allow owner/admin only).
-      await _firestore
-          .collection(AppConstants.usersCollection)
-          .doc(uid)
-          .set(userModel.toFirestore());
-
-      return userModel;
-    } on FirebaseAuthException catch (e) {
-      throw Exception(e.code);
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? e.code);
     }
   }
 
-  /// Deactivate a user — sets isActive=false in Firestore.
   Future<void> deactivateUser(String userId) async {
-    await _firestore
-        .collection(AppConstants.usersCollection)
-        .doc(userId)
-        .update({'isActive': false});
+    try {
+      final callable = _functions.httpsCallable('revokeUserTokens');
+      await callable.call(<String, dynamic>{'uid': userId});
+    } on FirebaseFunctionsException {
+      // Fallback if callable unavailable — Firestore trigger still revokes.
+      await _firestore
+          .collection(AppConstants.usersCollection)
+          .doc(userId)
+          .update({'isActive': false});
+    }
   }
 
-  /// Update a user's role and/or store assignment.
-  Future<void> updateUser(String userId, {
+  Future<void> updateUser(
+    String userId, {
     UserRole? role,
     String? assignedStoreId,
     bool? isActive,
@@ -256,10 +254,10 @@ class AuthService {
           .collection(AppConstants.usersCollection)
           .doc(userId)
           .update(updates);
+      // onUserWritten Cloud Function keeps JWT claims in sync with GCP.
     }
   }
 
-  // Save FCM token for push notifications.
   Future<void> updateFcmToken(String userId, String token) async {
     await _firestore
         .collection(AppConstants.usersCollection)
@@ -269,48 +267,70 @@ class AuthService {
 
   void dispose() {
     _firebaseAuthSub?.cancel();
+    _userDocSub?.cancel();
     _userController.close();
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  /// Called whenever Firebase's own auth state changes (login, logout,
-  /// token refresh, app restart). Re-fetches the Firestore user record
-  /// and emits on our stream so AuthProvider stays in sync.
   Future<void> _onFirebaseAuthStateChanged(User? firebaseUser) async {
     if (firebaseUser == null) {
+      await _userDocSub?.cancel();
+      _userDocSub = null;
       _currentUser = null;
       _userController.add(null);
       return;
     }
 
     try {
-      // Force-refresh the token on every auth-state change (app restart,
-      // resume, etc.) so the latest custom claims are always in the JWT
-      // before any Firestore read evaluates them.
       try {
         await firebaseUser.getIdToken(true);
       } catch (_) {}
 
       final model = await _fetchUserModel(firebaseUser);
       if (model == null || !model.isActive) {
-        // Invalid / deactivated account — force sign out.
         await _firebaseAuth.signOut();
         _currentUser = null;
         _userController.add(null);
         return;
       }
+      _attachUserDocListener(firebaseUser.uid);
       _currentUser = model;
       _userController.add(model);
     } catch (_) {
-      // Firestore read failed (offline, rules denied, etc.) — stay signed out.
       _currentUser = null;
       _userController.add(null);
     }
   }
 
-  /// Fetch and build a [UserModel] from Firestore for the given Firebase user.
-  /// Also reads custom claims from the ID token to verify role consistency.
+  /// Live sync with GCP Firestore — role / isActive changes apply immediately.
+  void _attachUserDocListener(String uid) {
+    _userDocSub?.cancel();
+    _userDocSub = _firestore
+        .collection(AppConstants.usersCollection)
+        .doc(uid)
+        .snapshots()
+        .listen((doc) async {
+      if (!doc.exists) {
+        await signOut();
+        return;
+      }
+      final model = UserModel.fromFirestore(doc);
+      if (!model.isActive) {
+        await signOut();
+        return;
+      }
+      final roleChanged = _currentUser?.role != model.role;
+      _currentUser = model;
+      _userController.add(model);
+      if (roleChanged) {
+        try {
+          await _firebaseAuth.currentUser?.getIdToken(true);
+        } catch (_) {}
+      }
+    }, onError: (_) {});
+  }
+
   Future<UserModel?> _fetchUserModel(User? firebaseUser) async {
     if (firebaseUser == null) return null;
 
@@ -320,13 +340,7 @@ class AuthService {
         .get();
 
     if (!doc.exists) return null;
-
-    final model = UserModel.fromFirestore(doc);
-
-    // Optionally cross-check with custom claims (set by Cloud Function).
-    // If claims differ from Firestore, the Cloud Function will reconcile on
-    // next token refresh — no action needed here beyond logging.
-    return model;
+    return UserModel.fromFirestore(doc);
   }
 
   void _updateLastLogin(String uid) {
@@ -334,25 +348,6 @@ class AuthService {
         .collection(AppConstants.usersCollection)
         .doc(uid)
         .update({'lastLogin': FieldValue.serverTimestamp()})
-        .catchError((_) {}); // Non-critical; ignore errors.
-  }
-
-  /// Creates a Firebase Auth account without disrupting the currently
-  /// signed-in admin session. On mobile this is unavoidable with the client
-  /// SDK — use Cloud Functions in production for true session isolation.
-  Future<String> _createAuthUserAndRestoreSession(
-      String email, String password) async {
-    // In production, use the `createUser` Cloud Function instead.
-    // That path uses the Admin SDK and never disturbs the current session.
-    final cred = await _firebaseAuth.createUserWithEmailAndPassword(
-      email: email.trim(),
-      password: password,
-    );
-    final newUid = cred.user!.uid;
-
-    // Sign out the newly created user immediately to prevent session hijack.
-    await _firebaseAuth.signOut();
-
-    return newUid;
+        .catchError((_) {});
   }
 }

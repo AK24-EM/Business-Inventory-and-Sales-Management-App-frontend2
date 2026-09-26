@@ -22,7 +22,7 @@ import '../../services/supplier_service.dart';
 import '../../services/notification_service.dart';
 
 /// Manager-specific Smart Restocking Screen with Real-Time Firestore Sync
-/// Features:
+/// Features:j
 /// - Real-time stream updates whenever stock changes
 /// - Instant 1-click restock with visual feedback
 /// - Live stream of recent restock activity movements
@@ -240,9 +240,12 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
               break;
             }
           }
-          resolvedSupplierId ??= (suppliers.isNotEmpty ? suppliers.first.id : 'sup_001');
+          resolvedSupplierId ??=
+              suppliers.isNotEmpty ? suppliers.first.id : null;
         }
-        final resolvedSupplierName = supplierMap[resolvedSupplierId] ?? 'Maharashtra FMCG Distributors';
+        final resolvedSupplierName = resolvedSupplierId != null
+            ? (supplierMap[resolvedSupplierId] ?? 'Unknown supplier')
+            : 'No supplier assigned';
 
         final purchasePrice = product.purchasePrice > 0 ? product.purchasePrice : 45.0;
 
@@ -292,8 +295,11 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
             break;
           }
         }
-        resolvedSupplierId ??= (suppliers.isNotEmpty ? suppliers.first.id : 'sup_001');
-        final resolvedSupplierName = supplierMap[resolvedSupplierId] ?? 'Maharashtra FMCG Distributors';
+        resolvedSupplierId ??=
+            suppliers.isNotEmpty ? suppliers.first.id : null;
+        final resolvedSupplierName = resolvedSupplierId != null
+            ? (supplierMap[resolvedSupplierId] ?? 'Unknown supplier')
+            : 'No supplier assigned';
 
         final req = RestockingRequirement(
           productId: inv.productId,
@@ -468,8 +474,6 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
       }
     }
   }
-
-
   Future<void> _generatePurchaseOrders() async {
     final targetList = _activeTab == 'needs_restock' ? _needsRestockList : _allRequirements;
     final selectedReqs = targetList
@@ -486,179 +490,58 @@ class _ManagerRestockingScreenState extends State<ManagerRestockingScreen>
       return;
     }
 
-    try {
-      final supplierService = SupplierService();
-      final supplierProvider = context.read<SupplierProvider>();
-      final suppliers = supplierProvider.suppliers;
-      final supplierMap = {for (final s in suppliers) s.id: s.name};
-      final currentUser = context.read<AuthProvider>().currentUser;
-      final store = context.read<StoreProvider>().selectedStore;
+    // Navigate to Purchase Order screen with selected items
+    // Group selected items by supplier for better organization
+    final supplierProvider = context.read<SupplierProvider>();
+    final suppliers = supplierProvider.suppliers;
 
-      if (store == null) {
-        throw Exception('No store selected.');
-      }
+    // Collect all items with their quantities
+    final List<Map<String, dynamic>> itemsData = selectedReqs.map((req) {
+      final key = '${req.storeId}_${req.productId}';
+      final qty = _quantities[key] ?? req.recommendedOrderQuantity;
 
-      // Group selected items by supplier
-      final Map<String, List<RestockingRequirement>> bySupplier = {};
-      for (final req in selectedReqs) {
-        String supId = req.supplierId ?? '';
-        if (supId.isEmpty) {
-          for (final s in suppliers) {
-            if (s.productIds.contains(req.productId)) {
-              supId = s.id;
-              break;
-            }
-          }
-          supId = supId.isNotEmpty ? supId : (suppliers.isNotEmpty ? suppliers.first.id : 'sup_001');
-        }
-        bySupplier.putIfAbsent(supId, () => []).add(req);
-      }
-
-      int poCount = 0;
-      final List<PurchaseOrder> createdOrders = [];
-
-      for (final entry in bySupplier.entries) {
-        final supplierId = entry.key;
-        final supplierName = supplierMap[supplierId] ?? 'Supplier ($supplierId)';
-
-        final items = entry.value.map((req) {
-          final key = '${req.storeId}_${req.productId}';
-          final qty = _quantities[key] ?? req.recommendedOrderQuantity;
-          return PurchaseOrderItem(
-            productId: req.productId,
-            productName: req.productName,
-            orderedQuantity: qty,
-            unitPrice: req.purchasePrice,
-            totalPrice: req.purchasePrice * qty,
+      String? supplierId;
+      String? supplierName;
+      if (req.supplierId != null && req.supplierId!.isNotEmpty) {
+        supplierId = req.supplierId;
+        if (suppliers.isNotEmpty) {
+          final supplier = suppliers.firstWhere(
+            (s) => s.id == supplierId,
+            orElse: () => suppliers.first,
           );
-        }).toList();
-
-        final total = items.fold(0.0, (s, i) => s + i.totalPrice);
-
-        final po = await supplierService.createPurchaseOrder(PurchaseOrder(
-          id: '',
-          supplierId: supplierId,
-          supplierName: supplierName,
-          items: items,
-          totalAmount: total,
-          status: PurchaseOrderStatus.sent,
-          createdByUserId: currentUser?.id ?? 'manager',
-          createdByUserName: currentUser?.name ?? 'Store Manager',
-          createdAt: DateTime.now(),
-          targetStoreId: store.id,
-        ));
-        createdOrders.add(po);
-        poCount++;
+          supplierName = supplier.name;
+        } else {
+          supplierName = req.supplierName;
+        }
+      } else {
+        for (final s in suppliers) {
+          if (s.productIds.contains(req.productId)) {
+            supplierId = s.id;
+            supplierName = s.name;
+            break;
+          }
+        }
+        if (supplierId == null && suppliers.isNotEmpty) {
+          supplierId = suppliers.first.id;
+          supplierName = suppliers.first.name;
+        }
       }
 
-      try {
-        final notificationService = NotificationService();
-        await notificationService.sendCustomNotification(
-          title: '✓ Purchase Orders Created',
-          message: '$poCount PO(s) created for restocking at ${store.name}',
-          userId: currentUser?.id ?? 'manager',
-          storeId: store.id,
-          sendPush: false,
-        );
-      } catch (_) {}
+      return {
+        'productId': req.productId,
+        'productName': req.productName,
+        'quantity': qty,
+        'unitPrice': req.purchasePrice,
+        'supplierId': supplierId,
+        'supplierName': supplierName,
+      };
+    }).toList();
 
-      if (mounted) {
-        final fmt = NumberFormat('#,##,##0.00', 'en_IN');
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Row(
-              children: [
-                Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 28),
-                SizedBox(width: 10),
-                Text(
-                  'Purchase Orders Created!',
-                  style: TextStyle(fontFamily: 'Poppins', fontSize: 16, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Successfully generated $poCount purchase order(s) for ${store.name}:',
-                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 12.5),
-                ),
-                const SizedBox(height: 12),
-                ...createdOrders.map(
-                  (po) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF059669)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  po.supplierName,
-                                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w700),
-                                ),
-                                Text(
-                                  '${po.items.length} product(s) ordered',
-                                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 10.5, color: Color(0xFF64748B)),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            '₹${fmt.format(po.totalAmount)}',
-                            style: const TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF059669)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Done', style: TextStyle(fontFamily: 'Poppins', color: Color(0xFF64748B))),
-              ),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  context.push('/manager/purchase-orders');
-                },
-                icon: const Icon(Icons.receipt_long_rounded, size: 16),
-                label: const Text('View Orders'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF059669),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-              ),
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error generating POs: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+    // Navigate to Purchase Order screen with these items
+    if (mounted) {
+      context.push('/manager/purchase-orders', extra: {
+        'prefilledItems': itemsData,
+      });
     }
   }
 

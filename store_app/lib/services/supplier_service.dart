@@ -67,10 +67,24 @@ class SupplierService {
     return SupplierModel.fromFirestore(doc);
   }
 
+  String _generatePONumber() {
+    final now = DateTime.now();
+    final suffix = now.millisecondsSinceEpoch.toString();
+    return 'PO-${now.year}${now.month.toString().padLeft(2, '0')}-${suffix.substring(suffix.length - 6)}';
+  }
+
   Future<PurchaseOrder> createPurchaseOrder(PurchaseOrder order) async {
+    if (order.targetStoreId.isEmpty) {
+      throw Exception('Select a store before dispatching a purchase order.');
+    }
+    if (order.items.isEmpty) {
+      throw Exception('Add at least one item before dispatching.');
+    }
+
     final ref = _orders.doc();
     final created = PurchaseOrder(
       id: ref.id,
+      poNumber: order.poNumber.isNotEmpty ? order.poNumber : _generatePONumber(),
       supplierId: order.supplierId,
       supplierName: order.supplierName,
       items: order.items,
@@ -82,18 +96,31 @@ class SupplierService {
       expectedDeliveryDate: order.expectedDeliveryDate,
       notes: order.notes,
       targetStoreId: order.targetStoreId,
+      storeName: order.storeName,
     );
     await ref.set(created.toFirestore());
     return created;
   }
 
   Stream<List<PurchaseOrder>> getPurchaseOrdersStream({String? storeId}) {
-    Query<Map<String, dynamic>> q = _orders;
-    if (storeId != null && storeId.isNotEmpty) {
-      q = q.where('targetStoreId', isEqualTo: storeId);
-    }
-    return q.snapshots().map(
-        (snap) => snap.docs.map(PurchaseOrder.fromFirestore).toList());
+    return _orders.snapshots().map((snap) {
+      final orders = snap.docs
+          .map((doc) {
+            try {
+              return PurchaseOrder.fromFirestore(doc);
+            } catch (_) {
+              return null;
+            }
+          })
+          .whereType<PurchaseOrder>()
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (storeId == null || storeId.isEmpty) return orders;
+      return orders
+          .where((o) =>
+              o.targetStoreId == storeId || o.targetStoreId.isEmpty)
+          .toList();
+    });
   }
 
   Future<DamagedProduct> recordDamagedProduct(DamagedProduct damaged) async {

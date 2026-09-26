@@ -106,30 +106,39 @@ class SaleModel {
   int get itemCount => items.fold(0, (acc, item) => acc + item.quantity);
 
   factory SaleModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    final itemsList = (data['items'] as List<dynamic>?)
+    if (!doc.exists) {
+      throw Exception('Sale document does not exist: ${doc.id}');
+    }
+    
+    final data = doc.data();
+    if (data == null) {
+      throw Exception('Sale document data is null: ${doc.id}');
+    }
+    
+    final Map<String, dynamic> saleData = data as Map<String, dynamic>;
+    final itemsList = (saleData['items'] as List<dynamic>?)
             ?.map((e) => SaleItem.fromMap(e as Map<String, dynamic>))
             .toList() ??
         [];
     return SaleModel(
       id: doc.id,
-      storeId: data['storeId'] ?? '',
-      storeName: data['storeName'] ?? '',
+      storeId: saleData['storeId'] ?? '',
+      storeName: saleData['storeName'] ?? '',
       items: itemsList,
-      subtotal: (data['subtotal'] ?? 0).toDouble(),
-      discountAmount: (data['discountAmount'] ?? 0).toDouble(),
-      loyaltyPointsRedeemed: (data['loyaltyPointsRedeemed'] ?? 0).toDouble(),
-      totalAmount: (data['totalAmount'] ?? 0).toDouble(),
-      paymentMode: PaymentModeExtension.fromString(data['paymentMode'] ?? 'cash'),
-      customerId: data['customerId'],
-      customerName: data['customerName'],
-      customerPhone: data['customerPhone'],
-      loyaltyPointsEarned: data['loyaltyPointsEarned'] ?? 0,
-      employeeId: data['employeeId'] ?? '',
-      employeeName: data['employeeName'] ?? '',
-      timestamp: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      invoiceNumber: data['invoiceNumber'],
-      isReturned: data['isReturned'] ?? false,
+      subtotal: (saleData['subtotal'] ?? 0).toDouble(),
+      discountAmount: (saleData['discountAmount'] ?? 0).toDouble(),
+      loyaltyPointsRedeemed: (saleData['loyaltyPointsRedeemed'] ?? 0).toDouble(),
+      totalAmount: (saleData['totalAmount'] ?? 0).toDouble(),
+      paymentMode: PaymentModeExtension.fromString(saleData['paymentMode'] ?? 'cash'),
+      customerId: saleData['customerId'],
+      customerName: saleData['customerName'],
+      customerPhone: saleData['customerPhone'],
+      loyaltyPointsEarned: saleData['loyaltyPointsEarned'] ?? 0,
+      employeeId: saleData['employeeId'] ?? '',
+      employeeName: saleData['employeeName'] ?? '',
+      timestamp: (saleData['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      invoiceNumber: saleData['invoiceNumber'],
+      isReturned: saleData['isReturned'] ?? false,
     );
   }
 
@@ -152,10 +161,6 @@ class SaleModel {
       'timestamp': Timestamp.fromDate(timestamp),
       'invoiceNumber': invoiceNumber,
       'isReturned': isReturned,
-      // Denormalized fields for quick querying
-      'date': '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}',
-      'month': '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}',
-      'year': timestamp.year.toString(),
     };
   }
 }

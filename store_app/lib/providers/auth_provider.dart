@@ -80,7 +80,6 @@ class AuthProvider extends ChangeNotifier {
     required String password,
     required String name,
     required String phone,
-    UserRole role = UserRole.owner,
   }) async {
     try {
       _status = AuthStatus.loading;
@@ -92,7 +91,6 @@ class AuthProvider extends ChangeNotifier {
         password: password,
         name: name,
         phone: phone,
-        role: role,
       );
 
       if (_currentUser != null) {
@@ -200,6 +198,12 @@ class AuthProvider extends ChangeNotifier {
       return 'Incorrect email or password.';
     }
     if (error.contains('invalid-email')) return 'Invalid email address.';
+    if (error.contains('email-already-in-use')) {
+      return 'An account with this email already exists.';
+    }
+    if (error.contains('weak-password')) {
+      return 'Password is too weak. Use at least 6 characters.';
+    }
     if (error.contains('user-disabled') ||
         error.contains('user-record-not-found') ||
         error.contains('user-disabled')) {

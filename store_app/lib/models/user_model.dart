@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum UserRole { owner, manager, employee, admin }
+enum UserRole { owner, manager, employee, admin, customer }
 
 extension UserRoleExtension on UserRole {
   String get displayName {
@@ -13,12 +13,39 @@ extension UserRoleExtension on UserRole {
         return 'Store Employee';
       case UserRole.admin:
         return 'System Administrator';
+      case UserRole.customer:
+        return 'Customer';
     }
   }
 
   String get value {
     return name;
   }
+
+  /// Post-login home path decided from the role returned by Firestore/GCP.
+  String get homeRoute {
+    switch (this) {
+      case UserRole.owner:
+      case UserRole.admin:
+        return '/owner';
+      case UserRole.manager:
+        return '/manager';
+      case UserRole.employee:
+        return '/employee';
+      case UserRole.customer:
+        return '/customer';
+    }
+  }
+
+  /// Roles the owner may assign (never self-registered).
+  bool get isOwnerAssignable =>
+      this == UserRole.manager || this == UserRole.employee;
+
+  bool get isStaff =>
+      this == UserRole.owner ||
+      this == UserRole.admin ||
+      this == UserRole.manager ||
+      this == UserRole.employee;
 
   static UserRole fromString(String value) {
     return UserRole.values.firstWhere(
@@ -57,6 +84,7 @@ class UserModel {
   bool get isManager => role == UserRole.manager;
   bool get isEmployee => role == UserRole.employee;
   bool get isAdmin => role == UserRole.admin;
+  bool get isCustomer => role == UserRole.customer;
   bool get canAccessAllStores => role == UserRole.owner || role == UserRole.admin;
 
   factory UserModel.fromFirestore(DocumentSnapshot doc) {

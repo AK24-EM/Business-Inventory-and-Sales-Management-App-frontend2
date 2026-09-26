@@ -1,11 +1,229 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    // TEMPORARY: Completely open for debugging registration
-    // TODO: Restore proper security rules after registration works
-    match /{document=**} {
-      allow read, write: if true;
+
+    // Schema used by the Flutter app and live GCP data:
+    // users.assignedStoreId, customers.registeredStoreId, stockTransfers,
+    // restocks, festivalAlerts. JWT claims: role + assignedStoreId (storeId alias).
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function tokenRole() {
+      return request.auth.token.role;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && tokenRole() == role;
+    }
+
+    function hasAnyRole(roles) {
+      return isAuthenticated() && tokenRole() in roles;
+    }
+
+    function isOwnerOrAdmin() {
+      return hasAnyRole(['owner', 'admin']);
+    }
+
+    function isStaff() {
+      return hasAnyRole(['owner', 'admin', 'manager', 'employee']);
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function tokenStoreId() {
+      return request.auth.token.assignedStoreId != null
+        ? request.auth.token.assignedStoreId
+        : request.auth.token.storeId;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userStoreId() {
+      return userDoc().assignedStoreId != null
+        ? userDoc().assignedStoreId
+        : userDoc().storeId;
+    }
+
+    function belongsToStore(storeId) {
+      return isOwnerOrAdmin()
+        || (storeId != null && (tokenStoreId() == storeId || userStoreId() == storeId));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isOwnerOrAdmin();
+      allow read: if hasRole('manager')
+        && resource.data.assignedStoreId == userStoreId();
+
+      // Customer self-registration only. Staff accounts are created by
+      // the owner via Cloud Function (Admin SDK), not from this screen.
+      allow create: if isOwner(userId)
+        && hasRequiredFields(['email', 'name', 'role'])
+        && request.resource.data.role == 'customer';
+      allow create: if isOwnerOrAdmin()
+        && hasRequiredFields(['email', 'name', 'role'])
+        && request.resource.data.role in ['manager', 'employee'];
+
+      allow update: if isOwner(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(['role', 'assignedStoreId', 'storeId', 'email']);
+      allow update: if isOwnerOrAdmin();
+
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /stores/{storeId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isOwnerOrAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && hasRequiredFields(['name', 'category']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /inventory/{inventoryId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isStaff()
+        && hasRequiredFields(['storeId', 'productId', 'currentStock'])
+        && belongsToStore(request.resource.data.storeId)
+        && request.resource.data.currentStock >= 0;
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /sales/{saleId} {
+      allow read: if isOwnerOrAdmin();
+      allow read: if hasAnyRole(['manager', 'employee'])
+        && belongsToStore(resource.data.storeId);
+      allow create: if isStaff()
+        && hasRequiredFields(['storeId', 'items', 'totalAmount', 'paymentMode', 'timestamp'])
+        && request.resource.data.items.size() > 0
+        && request.resource.data.totalAmount >= 0
+        && belongsToStore(request.resource.data.storeId);
+      allow update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && belongsToStore(resource.data.storeId);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff()
+        && hasRequiredFields(['name', 'phone', 'registeredStoreId', 'registeredAt']);
+      allow update: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /loyaltyAccounts/{accountId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff()
+        && hasRequiredFields(['phone', 'totalPoints']);
+      allow update: if isStaff()
+        && request.resource.data.availablePoints >= 0;
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /loyaltyTransactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff()
+        && hasRequiredFields(['phone', 'type', 'points', 'timestamp']);
+      allow update, delete: if false;
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if isAuthenticated();
+      allow create: if isStaff()
+        && hasRequiredFields(['storeId', 'productId', 'type', 'quantity', 'timestamp'])
+        && belongsToStore(request.resource.data.storeId);
+      allow update, delete: if isOwnerOrAdmin();
+    }
+
+    match /restocks/{restockId} {
+      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && hasRequiredFields(['storeId', 'productId', 'quantity', 'timestamp'])
+        && belongsToStore(request.resource.data.storeId);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /purchaseOrders/{orderId} {
+      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && hasRequiredFields(['items', 'status'])
+        && (request.resource.data.keys().hasAny(['storeId'])
+            || request.resource.data.keys().hasAny(['targetStoreId']));
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /stockTransfers/{transferId} {
+      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager'])
+        && hasRequiredFields(['sourceStoreId', 'destinationStoreId', 'status']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /transfers/{transferId} {
+      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read, create, update: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /festivals/{festivalId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if hasAnyRole(['owner', 'admin', 'manager']);
+    }
+
+    match /festivalAlerts/{alertId} {
+      allow read: if isAuthenticated();
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (
+        resource.data.targetUserId == request.auth.uid ||
+        resource.data.targetStoreId == tokenStoreId() ||
+        resource.data.targetStoreId == userStoreId() ||
+        isOwnerOrAdmin()
+      );
+      allow create: if isStaff();
+      allow update: if isAuthenticated()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['isRead', 'read', 'readAt']);
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    match /damagedProducts/{damagedId} {
+      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow create: if hasAnyRole(['owner', 'admin', 'manager'])
+        && hasRequiredFields(['storeId', 'productId', 'quantity', 'reason']);
+      allow update, delete: if isOwnerOrAdmin();
+    }
+
+    match /dailyReports/{reportId} {
+      allow read: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow create, update, delete: if false;
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated();
+      allow create, update: if hasAnyRole(['owner', 'admin', 'manager']);
+      allow delete: if isOwnerOrAdmin();
     }
   }
 }

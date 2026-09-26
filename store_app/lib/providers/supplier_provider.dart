@@ -159,6 +159,8 @@ class SupplierProvider extends ChangeNotifier {
     required String targetStoreId,
     required String userId,
     required String userName,
+    String storeName = '',
+    String? supplierName,
     DateTime? expectedDeliveryDate,
     String? notes,
   }) async {
@@ -166,9 +168,31 @@ class SupplierProvider extends ChangeNotifier {
     _error = null;
 
     try {
-      final supplier = await _supplierService.getSupplierById(supplierId);
-      if (supplier == null) {
-        _error = 'Supplier not found';
+      if (supplierId.isEmpty) {
+        _error = 'Select a supplier before dispatching.';
+        return false;
+      }
+      if (targetStoreId.isEmpty) {
+        _error = 'No store selected. Choose a store and try again.';
+        return false;
+      }
+      if (items.isEmpty) {
+        _error = 'Add at least one product to the purchase order.';
+        return false;
+      }
+
+      SupplierModel? supplier;
+      try {
+        supplier = await _supplierService.getSupplierById(supplierId);
+      } catch (_) {
+        supplier = null;
+      }
+
+      final resolvedName = (supplier?.name.isNotEmpty == true)
+          ? supplier!.name
+          : (supplierName ?? '').trim();
+      if (resolvedName.isEmpty) {
+        _error = 'Supplier not found. Add a real supplier before dispatching.';
         return false;
       }
 
@@ -180,16 +204,17 @@ class SupplierProvider extends ChangeNotifier {
       final order = PurchaseOrder(
         id: '',
         supplierId: supplierId,
-        supplierName: supplier.name,
+        supplierName: resolvedName,
         items: items,
         totalAmount: totalAmount,
-        status: PurchaseOrderStatus.draft,
+        status: PurchaseOrderStatus.sent,
         createdByUserId: userId,
         createdByUserName: userName,
         createdAt: DateTime.now(),
         expectedDeliveryDate: expectedDeliveryDate,
         notes: notes,
         targetStoreId: targetStoreId,
+        storeName: storeName,
       );
 
       final created = await _supplierService.createPurchaseOrder(order);

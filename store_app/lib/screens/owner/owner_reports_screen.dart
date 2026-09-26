@@ -144,6 +144,15 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen>
             ].map((p) => PopupMenuItem(value: p, child: Text(p))).toList(),
           ),
           IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: 'Export Report',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Export feature - Coming soon!')),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Force Refresh',
             onPressed: () {

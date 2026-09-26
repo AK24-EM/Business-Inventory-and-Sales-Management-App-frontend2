@@ -172,6 +172,8 @@ class _UserCard extends StatelessWidget {
         return AppColors.secondary;
       case UserRole.admin:
         return AppColors.accent;
+      case UserRole.customer:
+        return AppColors.textSecondary;
     }
   }
 
@@ -378,14 +380,14 @@ class _AddUserSheetState extends State<_AddUserSheet> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text('Add New User',
+              const Text('Assign Staff Account',
                   style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 18,
                       fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               const Text(
-                'A Firebase account will be created with the provided credentials.',
+                'Creates a Firebase account via GCP Cloud Functions. Managers and employees sign in with these credentials on the shared login screen.',
                 style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 11,
@@ -460,7 +462,10 @@ class _AddUserSheetState extends State<_AddUserSheet> {
               DropdownButtonFormField<UserRole>(
                 value: _role,
                 decoration: const InputDecoration(labelText: 'Role *'),
-                items: UserRole.values
+                items: const [
+                  UserRole.manager,
+                  UserRole.employee,
+                ]
                     .map((r) => DropdownMenuItem(
                           value: r,
                           child: Text(r.displayName,
@@ -512,7 +517,7 @@ class _AddUserSheetState extends State<_AddUserSheet> {
                               valueColor: AlwaysStoppedAnimation<Color>(
                                   Colors.white)),
                         )
-                      : const Text('Create User'),
+                      : const Text('Assign Account'),
                 ),
               ),
             ],

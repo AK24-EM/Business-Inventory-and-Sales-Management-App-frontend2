@@ -33,6 +33,8 @@ class GreetingCard extends StatelessWidget {
         return Icons.manage_accounts_rounded;
       case 'employee':
         return Icons.badge_rounded;
+      case 'customer':
+        return Icons.shopping_bag_rounded;
       default:
         return Icons.person_rounded;
     }

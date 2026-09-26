@@ -5,6 +5,7 @@ enum NotificationType {
   saleCompleted,
   stockTransfer,
   customerRegistered,
+  festival,
   custom,
 }
 
