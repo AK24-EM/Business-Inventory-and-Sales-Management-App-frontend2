@@ -32,7 +32,7 @@ class InventoryModel {
       isLowStock ? minimumStockLevel - currentStock : 0;
 
   factory InventoryModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final data = doc.data() as Map<String, dynamic>? ?? {};
     return InventoryModel(
       id: doc.id,
       storeId: data['storeId'] ?? '',

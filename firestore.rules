@@ -106,6 +106,8 @@ service cloud.firestore {
       allow read: if isOwnerOrAdmin();
       allow read: if hasAnyRole(['manager', 'employee'])
         && belongsToStore(resource.data.storeId);
+      allow read: if isAuthenticated()
+        && resource.data.customerId == request.auth.uid;
       allow create: if isStaff()
         && hasRequiredFields(['storeId', 'items', 'totalAmount', 'paymentMode', 'timestamp'])
         && request.resource.data.items.size() > 0

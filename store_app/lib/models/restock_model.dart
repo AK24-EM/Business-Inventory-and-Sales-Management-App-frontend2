@@ -59,7 +59,7 @@ class RestockModel {
   }
 
   factory RestockModel.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
+    final data = doc.data() as Map<String, dynamic>? ?? {};
     return RestockModel(
       id: doc.id,
       storeId: data['storeId'] ?? '',

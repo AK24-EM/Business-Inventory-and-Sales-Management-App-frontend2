@@ -20,21 +20,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passCtrl = TextEditingController();
   bool _obscurePass = true;
   bool _rememberMe = true;
-  String _selectedRolePreset = 'owner';
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
-  }
-
-  void _applyDemoCredentials(String role, String email, String password) {
-    setState(() {
-      _selectedRolePreset = role;
-      _emailCtrl.text = email;
-      _passCtrl.text = password;
-    });
   }
 
   Future<void> _signIn() async {
@@ -384,64 +375,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   'Sign In',
                   style: TextStyle(
                     fontFamily: 'Poppins',
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textPrimary,
                     letterSpacing: -0.2,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 const Text(
-                  'One login for customers, managers, and employees. Your account role opens the right dashboard.',
+                  'Enter your email and password to sign in.',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 13,
                     color: AppColors.textSecondary,
                   ),
-                ),
-                const SizedBox(height: 20),
-
-                // Demo staff credentials (owner-assigned accounts)
-                const Text(
-                  'DEMO STAFF CREDENTIALS',
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textTertiary,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildRoleChip(
-                        role: 'owner',
-                        title: 'Owner',
-                        email: 'owner@demo.com',
-                        pass: 'demo123',
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildRoleChip(
-                        role: 'manager',
-                        title: 'Manager',
-                        email: 'manager@demo.com',
-                        pass: 'demo123',
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildRoleChip(
-                        role: 'employee',
-                        title: 'Employee',
-                        email: 'employee@demo.com',
-                        pass: 'demo123',
-                      ),
-                    ),
-                  ],
                 ),
                 const SizedBox(height: 24),
 
@@ -637,14 +584,34 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Managers & employees: use the email and password assigned by your owner.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 11,
-                    color: AppColors.textTertiary,
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Managers & employees: sign in with the email and password assigned by your owner.',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11,
+                            color: AppColors.textSecondary,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -670,41 +637,6 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildRoleChip({
-    required String role,
-    required String title,
-    required String email,
-    required String pass,
-  }) {
-    final isSelected = _selectedRolePreset == role;
-    return InkWell(
-      onTap: () => _applyDemoCredentials(role, email, pass),
-      borderRadius: BorderRadius.circular(10),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primarySubtle : AppColors.surfaceVariant,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected ? AppColors.primary : AppColors.border,
-            width: isSelected ? 1.5 : 1,
-          ),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          title,
-          style: TextStyle(
-            fontFamily: 'Poppins',
-            fontSize: 11,
-            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-            color: isSelected ? AppColors.primary : AppColors.textSecondary,
-          ),
-        ),
-      ),
     );
   }
 }
